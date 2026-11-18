@@ -71,22 +71,38 @@ export class Hunter {
     this.swordPivot.add(blade, guard, grip);
     this.armR.add(this.swordPivot);
 
-    // -- Swing arc: a translucent arc that flashes visible during a
-    //    swing so the attack reads even before the damage number pops. ---
-    this.arc = new THREE.Mesh(
-      new THREE.PlaneGeometry(2.6, 1.4),
-      new THREE.MeshBasicMaterial({
-        color: 0xbfd8ff, transparent: true, opacity: 0,
-        side: THREE.DoubleSide, depthWrite: false,
-      })
-    );
-    this.arc.position.set(0, 1.1, 0.9); // in front of the hunter (+Z is forward)
-    this.arc.rotation.x = -0.4;
+    // -- Sword trail: a ribbon swept by the blade through a swing. The
+    //    old flat arc plane is gone — the trail follows the blade's real
+    //    path, so it reads as a cut instead of a pasted-on shape. It is
+    //    rebuilt every frame from recent blade-tip / blade-base pairs
+    //    (world space, so the ribbon stays where the cut happened even
+    //    as the hunter lunges). Samples older than trailMaxAge drop off.
+    this.trailSamples = [];
+    const TRAIL_MAX = 14;
+    this._trailMax = TRAIL_MAX;
+    this._trailPos = new Float32Array(TRAIL_MAX * 2 * 3);
+    this._trailCol = new Float32Array(TRAIL_MAX * 2 * 3);
+    const trailGeo = new THREE.BufferGeometry();
+    trailGeo.setAttribute('position', new THREE.BufferAttribute(this._trailPos, 3));
+    trailGeo.setAttribute('color', new THREE.BufferAttribute(this._trailCol, 3));
+    const trailIdx = [];
+    for (let i = 0; i < TRAIL_MAX - 1; i++) {
+      const a = i * 2;
+      trailIdx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    trailGeo.setIndex(trailIdx);
+    this.trailMesh = new THREE.Mesh(trailGeo, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.85,
+      side: THREE.DoubleSide, depthWrite: false,
+    }));
+    this.trailMesh.frustumCulled = false;
+    this.trailMesh.visible = false;
+    scene.add(this.trailMesh);
 
     for (const m of [this.torso, this.head, band, this.legL, this.legR, this.armL, armMesh, blade]) {
       m.castShadow = true;
     }
-    this.group.add(this.torso, this.head, band, eyeL, eyeR, nose, buckle, this.legL, this.legR, this.armL, this.armR, this.arc);
+    this.group.add(this.torso, this.head, band, eyeL, eyeR, nose, buckle, this.legL, this.legR, this.armL, this.armR);
     scene.add(this.group);
 
     this.reset();
@@ -111,10 +127,16 @@ export class Hunter {
     this.facing = Math.PI;  // yaw the hunter is turning towards
     this.rollDir = new THREE.Vector3(0, 0, -1);
     this.moving = false;
+    this.attackFacingSnapped = false; // facing locked in at swing start
+    this.trailSamples = [];
+    this.trailMesh.visible = false;
   }
 
   get alive() { return this.state !== 'dead'; }
   get position() { return this.group.position; }
+  // Trail state, for headless checks.
+  get trailAlive() { return this.trailSamples.length; }
+  get trailVisible() { return this.trailMesh.visible; }
 
   _spendStamina(n) {
     this.stamina = Math.max(0, this.stamina - n);
@@ -123,10 +145,13 @@ export class Hunter {
 
   // Start a light swing. Called on a click; if we are mid-swing it queues
   // the next combo hit instead, which is how the 3-hit combo chains.
+  // The buffer opens early (attackBufferStart into the swing), so a
+  // press slightly before the current swing ends still chains — presses
+  // before that are dropped, not held forever.
   tryLight() {
     if (!this.alive || this.state === 'dodge' || this.state === 'heal') return;
     if (this.state === 'attack') {
-      if (this.attackKind === 'light' && this.stateT > 0.18) this.comboQueued = true;
+      if (this.attackKind === 'light' && this.stateT > CONFIG.attackBufferStart) this.comboQueued = true;
       return;
     }
     if (this.stamina < CONFIG.lightCost) return;
@@ -148,11 +173,24 @@ export class Hunter {
     this.state = 'attack';
     this.stateT = 0;
     this.hitDone = false;
-    this.sfx.swing();
+    this.attackFacingSnapped = false;
+    this._swingSound();
+  }
+
+  // One whoosh per swing, pitched by which swing it is: the light combo
+  // rises 1.0 / 1.15 / 1.3, the heavy is low and deep at 0.7.
+  _swingSound() {
+    const pitch = this.attackKind === 'heavy' ? 0.7 : [1.0, 1.15, 1.3][this.attackIndex];
+    this.sfx.swing(pitch);
   }
 
   tryDodge(dir) {
     if (!this.alive || this.state === 'dodge') return;
+    // Dodge-cancel: a swing can only be cancelled into a dodge AFTER its
+    // hit has landed (stateT past the hit point). Cancelling earlier
+    // would let the hunter bail on the commitment of every swing.
+    if (this.state === 'attack' && !this.hitDone) return;
+    if (this.state === 'attack') this.comboQueued = false;
     if (this.stamina < CONFIG.dodgeCost) return;
     this._spendStamina(CONFIG.dodgeCost);
     // Roll in the direction we are moving, or backwards if standing still.
@@ -244,6 +282,19 @@ export class Hunter {
     }
     this.group.rotation.y = turnTowards(this.group.rotation.y, this.facing, dt * 12);
 
+    // Face the target at the START of a swing, not mid-swing: locked-on
+    // we snap to the boss, otherwise to the direction we are running.
+    // Without this a swing started just after a dodge went sideways.
+    if (this.state === 'attack' && !this.attackFacingSnapped) {
+      if (ctx.locked && ctx.bossPos) {
+        this.facing = Math.atan2(ctx.bossPos.x - this.position.x, ctx.bossPos.z - this.position.z);
+      } else if (this.moving) {
+        this.facing = Math.atan2(move.x, move.z);
+      }
+      this.group.rotation.y = this.facing;
+      this.attackFacingSnapped = true;
+    }
+
     // -- State machine ------------------------------------------------------
     if (this.state === 'dodge') {
       this.position.addScaledVector(this.rollDir, CONFIG.dodgeSpeed * dt);
@@ -266,6 +317,18 @@ export class Hunter {
         const range = this.attackKind === 'light' ? CONFIG.lightRange : CONFIG.heavyRange;
         ctx.onAttackHit(dmg, range, this.attackKind);
       }
+      // Lunge: a short step forward during the strike part of the swing,
+      // so the attack closes the last step of distance. It stops short
+      // of the boss's body — no lunging through it — and the arena
+      // bounds (collide, below) stop it leaving the ring.
+      const p = this.stateT / dur;
+      if (p >= CONFIG.lungeStart && p <= CONFIG.lungeEnd) {
+        const speed = this.attackKind === 'heavy' ? CONFIG.lungeHeavySpeed : CONFIG.lungeLightSpeed;
+        const dir = new THREE.Vector3(Math.sin(this.group.rotation.y), 0, Math.cos(this.group.rotation.y));
+        const next = this.position.clone().addScaledVector(dir, speed * dt);
+        const bossXZ = ctx.bossPos ? new THREE.Vector3(ctx.bossPos.x, 0, ctx.bossPos.z) : null;
+        if (!bossXZ || next.distanceTo(bossXZ) >= 2.0) this.position.copy(next);
+      }
       if (this.stateT >= dur) {
         if (this.attackKind === 'light' && this.comboQueued && this.attackIndex < 2) {
           // Chain into the next combo hit.
@@ -274,7 +337,8 @@ export class Hunter {
           this._spendStamina(CONFIG.lightCost);
           this.stateT = 0;
           this.hitDone = false;
-          this.sfx.swing();
+          this.attackFacingSnapped = false;
+          this._swingSound();
         } else {
           this.comboQueued = false;
           this.state = 'idle';
@@ -300,7 +364,7 @@ export class Hunter {
 
     collide(this.position, 0.5);
 
-    // -- Animation: walk cycle, sword pose, swing arc. ----------------------
+    // -- Animation: walk cycle, sword pose, sword trail. --------------------
     if (this.moving && this.state === 'idle') {
       this.walkPhase += dt * 11;
       const s = Math.sin(this.walkPhase);
@@ -314,27 +378,131 @@ export class Hunter {
     }
 
     if (this.state === 'attack') {
-      // The sword arm sweeps from raised-right across to the left.
+      // Each swing has its own pose, driven by keyframes: a wind-up
+      // (torso twisted away, sword cocked back), the strike (torso
+      // driving through, sword across/down), and a follow-through.
+      // Light 1 forehand, light 2 backhand, light 3 + heavy overhead.
       const dur = this.attackKind === 'light' ? CONFIG.lightComboTime : CONFIG.heavyTime;
       const p = Math.min(1, this.stateT / dur);
-      const sweep = this.attackIndex % 2 === 0 ? 1 : -1;
-      this.armR.rotation.z = sweep * (1.2 - p * 2.4);
-      this.armR.rotation.x = -0.6 + p * 0.5;
-      this.arc.material.opacity = 0.45 * (1 - p);
-      this.arc.rotation.z = sweep * (p * 2 - 1) * 1.2;
+      const pose = this._attackPose(p);
+      this.armR.rotation.x = pose.armX;
+      this.armR.rotation.z = pose.armZ;
+      this.swordPivot.rotation.x = pose.swordX;
+      this.torso.rotation.y = pose.torsoY;
+      this.torso.rotation.x = pose.torsoX;
+      this.legL.rotation.x = pose.legL;
+      this.legR.rotation.x = pose.legR;
+      this.armL.rotation.x = pose.armLX;
+      this._sampleTrail(dt);
     } else if (this.state === 'heal') {
       this.armR.rotation.x = -2.2; // raise the sword hand while drinking
       this.armR.rotation.z = 0;
-      this.arc.material.opacity = 0;
+      this._decayPose();
     } else {
-      this.armR.rotation.z *= 0.8;
-      this.armR.rotation.x *= 0.8;
-      this.arc.material.opacity = 0;
+      this._decayPose();
     }
+    this._rebuildTrail(dt);
 
     // Flash the hunter white briefly after taking a hit (readability).
     const flash = this.hurtInvuln > 0.55;
     this.torso.material.emissive.setHex(flash ? 0x882222 : 0x000000);
+  }
+
+  // -- Attack poses ---------------------------------------------------------
+  // Keyframes per swing: [time, pose]. armX/armZ = sword arm, swordX =
+  // blade pivot, torsoY/X = torso twist/lean, legL/R = stance, armLX =
+  // left arm (reaches up to the grip on overhead swings).
+  _attackPose(p) {
+    const keys = this.attackKind === 'heavy' ? [
+      [0.00, { armX: -0.2, armZ: 0.2, swordX: 0.0, torsoY: 0.00, torsoX: 0.00, legL: 0.00, legR: 0.00, armLX: 0.0 }],
+      [0.30, { armX: -2.7, armZ: 0.2, swordX: -1.5, torsoY: -0.30, torsoX: -0.35, legL: -0.50, legR: 0.55, armLX: -1.8 }],
+      [0.55, { armX: 0.9, armZ: 0.0, swordX: 0.6, torsoY: 0.15, torsoX: 0.55, legL: 0.55, legR: -0.45, armLX: 0.6 }],
+      [1.00, { armX: 0.5, armZ: 0.0, swordX: 0.3, torsoY: 0.00, torsoX: 0.30, legL: 0.30, legR: -0.25, armLX: 0.3 }],
+    ] : this.attackIndex === 2 ? [
+      [0.00, { armX: -0.2, armZ: 0.2, swordX: 0.0, torsoY: 0.00, torsoX: 0.00, legL: 0.00, legR: 0.00, armLX: 0.0 }],
+      [0.30, { armX: -2.4, armZ: 0.3, swordX: -1.2, torsoY: -0.15, torsoX: -0.25, legL: -0.40, legR: 0.40, armLX: -1.2 }],
+      [0.55, { armX: 0.7, armZ: 0.0, swordX: 0.5, torsoY: 0.10, torsoX: 0.40, legL: 0.45, legR: -0.35, armLX: 0.4 }],
+      [1.00, { armX: 0.3, armZ: 0.1, swordX: 0.2, torsoY: 0.00, torsoX: 0.20, legL: 0.20, legR: -0.20, armLX: 0.2 }],
+    ] : this.attackIndex === 1 ? [
+      // Backhand: mirror of the forehand, across the other way.
+      [0.00, { armX: -0.2, armZ: -0.2, swordX: 0.0, torsoY: 0.00, torsoX: 0.00, legL: 0.00, legR: 0.00, armLX: 0.0 }],
+      [0.30, { armX: -0.5, armZ: -1.5, swordX: -0.6, torsoY: 0.55, torsoX: -0.08, legL: 0.35, legR: -0.30, armLX: -0.3 }],
+      [0.55, { armX: -0.4, armZ: 1.5, swordX: 0.4, torsoY: -0.55, torsoX: 0.12, legL: -0.30, legR: 0.35, armLX: 0.3 }],
+      [1.00, { armX: -0.3, armZ: 0.7, swordX: 0.2, torsoY: -0.25, torsoX: 0.05, legL: -0.15, legR: 0.15, armLX: 0.1 }],
+    ] : [
+      // Forehand: cocked up-right, driven across to the left.
+      [0.00, { armX: -0.2, armZ: 0.2, swordX: 0.0, torsoY: 0.00, torsoX: 0.00, legL: 0.00, legR: 0.00, armLX: 0.0 }],
+      [0.30, { armX: -0.5, armZ: 1.5, swordX: -0.6, torsoY: -0.55, torsoX: -0.08, legL: -0.30, legR: 0.35, armLX: 0.3 }],
+      [0.55, { armX: -0.4, armZ: -1.5, swordX: 0.4, torsoY: 0.55, torsoX: 0.12, legL: 0.35, legR: -0.30, armLX: -0.3 }],
+      [1.00, { armX: -0.3, armZ: -0.7, swordX: 0.2, torsoY: 0.25, torsoX: 0.05, legL: 0.15, legR: -0.15, armLX: -0.1 }],
+    ];
+    // Find the surrounding keyframes and lerp between them.
+    let i = 0;
+    while (i < keys.length - 2 && p > keys[i + 1][0]) i++;
+    const [t0, a] = keys[i];
+    const [t1, b] = keys[i + 1];
+    const f = t1 > t0 ? Math.max(0, Math.min(1, (p - t0) / (t1 - t0))) : 1;
+    const out = {};
+    for (const k of Object.keys(a)) out[k] = a[k] + (b[k] - a[k]) * f;
+    return out;
+  }
+
+  // Ease the attack pose back to neutral once a swing / heal ends.
+  _decayPose() {
+    this.armR.rotation.z *= 0.8;
+    this.armR.rotation.x *= 0.8;
+    this.swordPivot.rotation.x *= 0.8;
+    this.torso.rotation.y *= 0.8;
+    this.torso.rotation.x *= 0.8;
+    this.armL.rotation.x *= 0.8;
+  }
+
+  // -- Sword trail ----------------------------------------------------------
+  // Record one blade-tip / blade-base pair per frame while swinging.
+  _sampleTrail(dt) {
+    this.group.updateMatrixWorld(true);
+    const tip = this.swordPivot.localToWorld(new THREE.Vector3(0, -1.35, 0));
+    const base = this.swordPivot.localToWorld(new THREE.Vector3(0, -0.15, 0));
+    this.trailSamples.push({ tip, base, age: 0 });
+    if (this.trailSamples.length > this._trailMax) this.trailSamples.shift();
+    for (const s of this.trailSamples) s.age += dt;
+    while (this.trailSamples.length && this.trailSamples[0].age > CONFIG.trailMaxAge) {
+      this.trailSamples.shift();
+    }
+  }
+
+  // Rebuild the ribbon from the live samples; hide it when empty.
+  _rebuildTrail(dt) {
+    if (this.state !== 'attack') {
+      // After a swing the ribbon fades with its samples instead of
+      // vanishing on the frame the swing ends.
+      for (const s of this.trailSamples) s.age += dt;
+      while (this.trailSamples.length && this.trailSamples[0].age > CONFIG.trailMaxAge) {
+        this.trailSamples.shift();
+      }
+    }
+    const n = this.trailSamples.length;
+    if (n < 2) { this.trailMesh.visible = false; return; }
+    for (let i = 0; i < n; i++) {
+      const s = this.trailSamples[i];
+      const f = Math.max(0, 1 - s.age / CONFIG.trailMaxAge);
+      this._trailPos[i * 6] = s.tip.x; this._trailPos[i * 6 + 1] = s.tip.y; this._trailPos[i * 6 + 2] = s.tip.z;
+      this._trailPos[i * 6 + 3] = s.base.x; this._trailPos[i * 6 + 4] = s.base.y; this._trailPos[i * 6 + 5] = s.base.z;
+      this._trailCol[i * 6] = 0.75 * f; this._trailCol[i * 6 + 1] = 0.85 * f; this._trailCol[i * 6 + 2] = 1.0 * f;
+      this._trailCol[i * 6 + 3] = 0.4 * f; this._trailCol[i * 6 + 4] = 0.5 * f; this._trailCol[i * 6 + 5] = 0.7 * f;
+    }
+    // Pad the unused tail of the buffer with the last sample so the
+    // index (built for the full buffer) never reads stale vertices.
+    for (let i = n; i < this._trailMax; i++) {
+      for (let c = 0; c < 6; c++) {
+        this._trailPos[i * 6 + c] = this._trailPos[(n - 1) * 6 + c];
+        this._trailCol[i * 6 + c] = 0;
+      }
+    }
+    this.trailMesh.geometry.setDrawRange(0, (n - 1) * 6);
+    this.trailMesh.geometry.attributes.position.needsUpdate = true;
+    this.trailMesh.geometry.attributes.color.needsUpdate = true;
+    this.trailMesh.visible = true;
   }
 }
 

@@ -59,6 +59,20 @@ export const CONFIG = {
   sparkCount: 14,           // impact sparks per landed hit
   dustPuffCount: 8,         // dust puffs per paw stamp / stomp burst
 
+  // -- Player attacks -------------------------------------------------------
+  // The lunge is a short step forward during the strike part of a swing,
+  // so attacks close the last step of distance instead of whiffing.
+  lungeLightSpeed: 4.5,     // m/s during the lunge window of a light swing
+  lungeHeavySpeed: 3.5,     // m/s during the lunge window of a heavy swing
+  lungeStart: 0.12,         // swing fraction where the lunge starts
+  lungeEnd: 0.65,           // swing fraction where the lunge ends
+  // Light lunge ≈ 4.5 m/s × (0.53 × 0.35s) ≈ 0.8 m; heavy ≈ 1.3 m.
+  attackBufferStart: 0.08,  // earliest into a swing a queued combo hit counts
+  trailMaxAge: 0.18,        // seconds a sword-trail sample lives
+  lightShake: 0.2,          // camera shake on a landed light hit
+  heavyShake: 0.5,          // camera shake on a landed heavy hit
+  heavyDustCount: 10,       // dust kicked up where a heavy slam lands
+
   // -- Camera ---------------------------------------------------------------
   cameraSmooth: 12,         // how fast the camera eases to its spot (per second)
   cameraMinDist: 2.5,       // closest the camera is ever pulled in

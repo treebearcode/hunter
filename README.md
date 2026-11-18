@@ -12,10 +12,16 @@ Play it: https://treebearcode.github.io/hunter/ (GitHub Pages, served from `docs
 - **Hunter:** low-poly humanoid, third-person camera, lock-on.
 - **Weapon:** Longsword only — fast, low damage, dodge-friendly.
   - Light attack (click / J): 3-hit combo, 8 / 8 / 12 damage, 8 stamina each.
+    Forehand, backhand, overhead chop — each with its own wind-up,
+    a small lunge forward, and a sword-trail ribbon that follows the
+    blade. Pressing attack early buffers the next hit.
   - Heavy attack (right-click / K): 18 damage, slower windup, 15 stamina.
+    A two-handed overhead slam with dust where it lands.
   - Dodge roll (Shift / Space): i-frames for the whole 0.35 s roll, 20 stamina.
+    A swing can be cancelled into a dodge once its hit has landed.
   - Heal (R): 3 per attempt, +40 HP over a 1.2 s channel, interrupted by a hit.
   - Stamina 100, regenerates ~25/s after 0.8 s without spending.
+  - Hit-stop fires only on a landed hit — a whiff never freezes the game.
 - **Boss:** Gorehorn, an original horned quadruped brute, 600 HP.
   - Charge (telegraphed, hits the wall → stagger), horn sweep (25 dmg),
     stomp shockwave (20 dmg, roll through the ring).

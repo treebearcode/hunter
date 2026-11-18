@@ -309,11 +309,19 @@ function onAttackHit(dmg, range, kind) {
   if (!result) return;
   sfx.hit();
   // Hit-stop: freeze the game for a beat so the connect has weight.
+  // This only runs on a landed hit — a whiff returns above, so a miss
+  // never freezes the game.
   hitStop = kind === 'heavy' ? CONFIG.hitStopHeavy : CONFIG.hitStopLight;
   lastHitStop = hitStop;
   // Impact sparks at the hit point, in the world, not on the HUD.
   const hitPoint = isHead ? boss.headPos : boss.position.clone().setY(1.6);
   effects.sparks(hitPoint, CONFIG.sparkCount);
+  // Heavier connect, heavier feel: the heavy slam shakes the camera
+  // more and kicks dust up where it lands; a light hit just shudders.
+  shake = Math.max(shake, kind === 'heavy' ? CONFIG.heavyShake : CONFIG.lightShake);
+  if (kind === 'heavy') {
+    effects.dust(new THREE.Vector3(boss.position.x, 0.1, boss.position.z), CONFIG.heavyDustCount);
+  }
   ui.damageNumber(boss.headPos, camera, String(dmg), isHead ? 'head' : 'hit');
   if (result.hornBroke) {
     ui.damageNumber(boss.headPos, camera, 'HORN BREAK!', 'break');
@@ -458,6 +466,7 @@ window.__hunter = {
   get pointerLocked() { return pointerLocked; },
   get paused() { return paused; },
   get lastHitStop() { return lastHitStop; },
+  get lastSwingPitch() { return sfx.lastSwingPitch; },
   get particlesAlive() { return effects.aliveCount; },
   get lastSparkCount() { return effects.lastSparkCount; },
   get cameraPos() {
@@ -496,6 +505,23 @@ window.__hunter = {
     // Drive the pointer-lock orbit math without a real pointer lock
     // (headless Chromium cannot lock the pointer the same way).
     simulateMouseLook(dx, dy) { applyMouseLook(dx, dy); },
+    // Start one specific swing from idle, for headless pose checks:
+    // a real chained combo is too fast for screenshots under
+    // SwiftShader (a screenshot alone advances ~0.85s of game time).
+    // Bypasses the stamina cost — test-only, the game never calls these.
+    startLightHit(i) {
+      if (hunter.state !== 'idle' || !hunter.alive) return false;
+      hunter.attackIndex = i;
+      hunter.attackKind = 'light';
+      hunter._beginAttack();
+      return true;
+    },
+    startHeavy() {
+      if (hunter.state !== 'idle' || !hunter.alive) return false;
+      hunter.attackKind = 'heavy';
+      hunter._beginAttack();
+      return true;
+    },
     pressKey(code) {
       keys.add(code);
       if (code === 'KeyR') hunter.tryHeal();

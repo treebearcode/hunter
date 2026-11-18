@@ -9,6 +9,7 @@ export class SoundFX {
     this.ctx = null;
     this.master = null;
     this.enabled = true;
+    this.lastSwingPitch = 0; // sticky, for headless checks (set even with no audio)
   }
 
   // Call from a click handler. Safe to call more than once.
@@ -54,7 +55,13 @@ export class SoundFX {
     this._tone(freq * 0.5, freq * 0.25, dur, 'sine', volume * 0.8);
   }
 
-  swing()  { this._tone(500, 180, 0.12, 'sine', 0.5); }          // whoosh
+  // Whoosh, pitched per swing so the combo rises: light hits 1.0 / 1.15 /
+  // 1.3, heavy 0.7 (low and deep). Recorded even when there is no audio
+  // context, so headless checks can read the pitch.
+  swing(pitch = 1) {
+    this.lastSwingPitch = pitch;
+    this._tone(500 * pitch, 180 * pitch, 0.12, 'sine', 0.5);
+  }
   // Sword connects: a low thud under a short metallic bite, louder and
   // much heavier than the swing whoosh so a landed hit reads by ear.
   hit()    { this._thud(160, 0.14, 1.0); this._tone(320, 140, 0.08, 'square', 0.55); }
