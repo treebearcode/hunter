@@ -55,7 +55,11 @@ export class SoundFX {
   }
 
   swing()  { this._tone(500, 180, 0.12, 'sine', 0.5); }          // whoosh
-  hit()    { this._tone(220, 90, 0.1, 'square', 0.5); }          // sword connects
+  // Sword connects: a low thud under a short metallic bite, louder and
+  // much heavier than the swing whoosh so a landed hit reads by ear.
+  hit()    { this._thud(160, 0.14, 1.0); this._tone(320, 140, 0.08, 'square', 0.55); }
+  // Gorehorn snorts before a charge: a rough descending growl.
+  snort()  { this._tone(280, 90, 0.35, 'sawtooth', 0.55); this._tone(140, 70, 0.3, 'square', 0.35); }
   hurt()   { this._tone(160, 60, 0.25, 'sawtooth', 0.7); }       // hunter takes a hit
   heal()   { this._tone(400, 900, 0.4, 'sine', 0.5); }           // heal chime
   dodge()  { this._tone(300, 500, 0.12, 'sine', 0.3); }

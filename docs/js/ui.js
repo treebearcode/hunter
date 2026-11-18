@@ -66,14 +66,24 @@ export class UI {
     this.flashEl.classList.add('show');
   }
 
+  showPause() {
+    this.el('pause-screen').hidden = false;
+  }
+
+  hidePause() {
+    this.el('pause-screen').hidden = true;
+  }
+
   showStart() {
     this.hud.hidden = true;
+    this.hidePause();
     this.el('start-screen').hidden = false;
     this.el('end-screen').hidden = true;
   }
 
   showGame() {
     this.hud.hidden = false;
+    this.hidePause();
     this.el('start-screen').hidden = true;
     this.el('end-screen').hidden = true;
   }

@@ -24,13 +24,21 @@ Play it: https://treebearcode.github.io/hunter/ (GitHub Pages, served from `docs
   - Enrages under 30% HP: attacks ~25% faster, red glow.
 - **Win / lose:** boss HP to 0 → victory screen with clear time;
   hunter HP to 0 → defeat screen. Retry restarts instantly.
+- **Polish Pass 1:** Gorehorn telegraphs with its body, not floor
+  markers — head low and pawing dust before a charge, head reared back
+  and twisted before a sweep, reared up on its hind legs before a
+  stomp. Landed hits have a brief hit-stop, impact sparks and a
+  heavier thud; damage numbers pop. The camera eases to its spot and
+  is pulled in instead of clipping through the boss, pillars or the
+  wall. Pause with P or the ⏸ button (frozen overlay, Resume /
+  Restart); Esc only releases the mouse.
 
 ## Controls
 
 WASD move · mouse looks around once captured (click the canvas, Esc to
 release) · Q / E or right-drag orbits the camera · wheel zooms · Tab or
 middle-click toggles lock-on · click / J light attack · right-click / K
-heavy attack · Shift / Space dodge roll · R heal.
+heavy attack · Shift / Space dodge roll · R heal · P pause.
 
 Left click is only ever an attack — it never orbits the camera, so
 orbiting can no longer trigger a swing (and swinging can no longer
@@ -57,6 +65,7 @@ then open http://localhost:8000.
 - `docs/js/hunter.js` — hunter mesh, movement, dodge, attacks, heal
 - `docs/js/boss.js` — Gorehorn mesh, AI state machine, moves, stagger, horn break
 - `docs/js/arena.js` — ground, wall, rocks, pillars, collision
+- `docs/js/effects.js` — dust puffs and impact sparks (pooled particles)
 - `docs/js/audio.js` — Web Audio blips (no audio files)
 - `docs/js/ui.js` — HUD bars, damage numbers, overlays
 

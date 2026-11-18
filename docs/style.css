@@ -30,6 +30,7 @@ body { font-family: Georgia, 'Times New Roman', serif; color: #e8e0cc; }
 .hint { color: #9a917e; font-size: 12px; }
 
 #lock-indicator { position: absolute; top: 74px; left: 50%; transform: translateX(-50%); font-size: 13px; letter-spacing: 0.2em; color: #ffd76b; text-shadow: 0 1px 4px #000; }
+#pause-button { position: absolute; top: 12px; right: 18px; pointer-events: auto; padding: 6px 12px; font-size: 16px; letter-spacing: 0; }
 #lock-hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 16px; font-family: system-ui, sans-serif; color: #ffd76b; background: rgba(0, 0, 0, 0.6); padding: 10px 18px; border-radius: 4px; text-shadow: 0 1px 4px #000; }
 #lock-hint[hidden] { display: none; }
 #enrage-banner { position: absolute; top: 110px; left: 50%; transform: translateX(-50%); font-size: 20px; letter-spacing: 0.25em; color: #ff6b4a; text-shadow: 0 2px 8px #000; animation: pulse 0.5s infinite alternate; }
@@ -39,12 +40,12 @@ body { font-family: Georgia, 'Times New Roman', serif; color: #e8e0cc; }
 
 /* -- Damage numbers -------------------------------------------------------- */
 #damage-layer { position: fixed; inset: 0; pointer-events: none; z-index: 11; overflow: hidden; }
-.dmg-num { position: absolute; transform: translate(-50%, -50%); font-size: 22px; font-weight: bold; font-family: system-ui, sans-serif; color: #fff; text-shadow: 0 2px 4px #000; animation: float-up 0.8s ease-out forwards; }
+.dmg-num { position: absolute; transform: translate(-50%, -50%); font-size: 24px; font-weight: bold; font-family: system-ui, sans-serif; color: #fff; text-shadow: 0 2px 4px #000; animation: float-up 0.8s ease-out forwards; }
 .dmg-num.head { color: #ffd76b; }
-.dmg-num.break { color: #ff9d4a; font-size: 26px; letter-spacing: 0.05em; }
+.dmg-num.break { color: #ff9d4a; font-size: 30px; letter-spacing: 0.05em; }
 @keyframes float-up {
-  from { opacity: 1; margin-top: 0; }
-  to { opacity: 0; margin-top: -60px; }
+  from { opacity: 1; margin-top: 0; transform: translate(-50%, -50%) scale(1.4); }
+  to { opacity: 0; margin-top: -60px; transform: translate(-50%, -50%) scale(1); }
 }
 
 #damage-flash { position: fixed; inset: 0; pointer-events: none; z-index: 12; background: radial-gradient(ellipse at center, transparent 55%, rgba(200, 0, 0, 0.45)); opacity: 0; }
@@ -61,6 +62,7 @@ body { font-family: Georgia, 'Times New Roman', serif; color: #e8e0cc; }
 .panel .sub { font-style: italic; color: #9a917e; margin-bottom: 14px; }
 .panel p { line-height: 1.55; margin-bottom: 14px; }
 .panel .fine { font-size: 13px; color: #9a917e; margin-bottom: 0; }
+.panel button + button { margin-left: 12px; }
 .controls { margin: 0 auto 18px; border-collapse: collapse; text-align: left; font-family: system-ui, sans-serif; font-size: 14px; }
 .controls td { padding: 3px 12px 3px 0; }
 .controls td:first-child { color: #ffd76b; white-space: nowrap; }

@@ -264,7 +264,7 @@ export class Hunter {
           ? CONFIG.lightComboDmg[this.attackIndex]
           : CONFIG.heavyDmg;
         const range = this.attackKind === 'light' ? CONFIG.lightRange : CONFIG.heavyRange;
-        ctx.onAttackHit(dmg, range);
+        ctx.onAttackHit(dmg, range, this.attackKind);
       }
       if (this.stateT >= dur) {
         if (this.attackKind === 'light' && this.comboQueued && this.attackIndex < 2) {

@@ -10,7 +10,8 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { SoundFX } from './audio.js';
-import { buildArena } from './arena.js';
+import { buildArena, OBSTACLES } from './arena.js';
+import { Effects } from './effects.js';
 import { Hunter } from './hunter.js';
 import { Boss } from './boss.js';
 import { UI } from './ui.js';
@@ -29,6 +30,7 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerH
 const sfx = new SoundFX();
 const ui = new UI();
 buildArena(scene);
+const effects = new Effects(scene);
 const hunter = new Hunter(scene, sfx);
 const boss = new Boss(scene, sfx);
 
@@ -45,9 +47,14 @@ let endTimer = 0; // delay before the win/lose overlay appears
 //    the boss stays framed. ---------------------------------------------------
 let camYaw = 0;        // horizontal orbit angle
 let camPitch = 0.35;   // vertical angle, radians above horizontal
-let camDist = 9;       // metres from the hunter
+let camDist = 9;       // metres from the hunter (wheel target)
 let locked = false;
 let shake = 0;
+// Smoothed camera position / look point: the camera eases towards where
+// it wants to be instead of snapping there, so lock-on swings, dodges
+// and zoom steps all glide.
+let camPosS = null;
+let camLookS = null;
 
 function updateCamera(dt) {
   if (locked && boss.alive) {
@@ -63,21 +70,45 @@ function updateCamera(dt) {
   }
   const target = hunter.position.clone();
   target.y += 1.6; // look at the hunter's chest, not their feet
-  const off = new THREE.Vector3(
+  const dir = new THREE.Vector3(
     Math.sin(camYaw) * Math.cos(camPitch),
     Math.sin(camPitch),
     Math.cos(camYaw) * Math.cos(camPitch)
-  ).multiplyScalar(camDist);
-  camera.position.copy(target).add(off);
+  );
+  // Camera collision: walk from the hunter towards the wanted spot in
+  // small steps and stop before the first thing in the way — the boss
+  // body, a pillar or rock tall enough to block the view, or the arena
+  // wall. The camera is pulled in instead of clipping through.
+  let freeDist = camDist;
+  const step = 0.5;
+  const bossC = boss.position.clone().setY(1.6);
+  for (let d = step; d <= camDist; d += step) {
+    const p = target.clone().addScaledVector(dir, d);
+    let blocked = false;
+    if (p.distanceTo(bossC) < 2.6) blocked = true; // boss body sphere
+    if (!blocked && Math.hypot(p.x, p.z) > CONFIG.arenaRadius - 0.5) blocked = true;
+    if (!blocked) {
+      for (const o of OBSTACLES) {
+        if (p.y < o.h && Math.hypot(p.x - o.x, p.z - o.z) < o.r + 0.5) { blocked = true; break; }
+      }
+    }
+    if (blocked) { freeDist = Math.max(CONFIG.cameraMinDist, d - step - 0.3); break; }
+  }
+  const desired = target.clone().addScaledVector(dir, freeDist);
+  if (!camPosS) { camPosS = desired.clone(); camLookS = target.clone(); }
+  const k = 1 - Math.exp(-CONFIG.cameraSmooth * Math.max(0, dt));
+  camPosS.lerp(desired, dt > 0 ? k : 0);
+  // When locked on, aim slightly towards the boss so it stays framed.
+  const look = target.clone();
+  if (locked && boss.alive) look.lerp(boss.position.clone().setY(1.6), 0.35);
+  camLookS.lerp(look, dt > 0 ? k : 0);
+  camera.position.copy(camPosS);
   if (shake > 0) {
     camera.position.x += (Math.random() - 0.5) * shake;
     camera.position.y += (Math.random() - 0.5) * shake;
     shake = Math.max(0, shake - dt * 2);
   }
-  // When locked on, aim slightly towards the boss so it stays framed.
-  const look = target.clone();
-  if (locked && boss.alive) look.lerp(boss.position.clone().setY(1.6), 0.35);
-  camera.lookAt(look);
+  camera.lookAt(camLookS);
 }
 
 // -- Input --------------------------------------------------------------------
@@ -88,7 +119,8 @@ const input = { forward: false, back: false, left: false, right: false, camYaw: 
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Tab') { e.preventDefault(); toggleLock(); return; }
-  if (phase !== 'playing') return;
+  if (e.code === 'KeyP') { togglePause(); return; }
+  if (phase !== 'playing' || paused) return;
   keys.add(e.code);
   if (e.code === 'KeyR') hunter.tryHeal();
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'Space') {
@@ -126,7 +158,7 @@ let rightDragStartT = 0;
 
 const lockHint = document.getElementById('lock-hint');
 function updateLockHint() {
-  if (lockHint) lockHint.hidden = !(phase === 'playing' && !pointerLocked);
+  if (lockHint) lockHint.hidden = !(phase === 'playing' && !paused && !pointerLocked);
 }
 function applyMouseLook(dx, dy) {
   // Same orbit math the old drag used: mouse right turns the view
@@ -228,10 +260,39 @@ function currentMoveDir() {
   return new THREE.Vector3(-Math.sin(hunter.group.rotation.y), 0, -Math.cos(hunter.group.rotation.y));
 }
 
+// -- Pause --------------------------------------------------------------------
+// P key or the HUD pause button, only while a fight is running. While
+// paused the game freezes completely — hunter, boss, timer, animations.
+// Esc does NOT pause: it only releases the mouse, which is how the
+// player reaches the pause button in the first place.
+let paused = false;
+let hitStop = 0;      // seconds of freeze left on a landed hit
+let lastHitStop = 0;  // sticky copy, for headless checks
+
+function togglePause() {
+  if (paused) {
+    paused = false;
+    ui.hidePause();
+    try {
+      const p = canvas.requestPointerLock();
+      if (p && p.catch) p.catch(() => {});
+    } catch (_) { /* lock hint covers it */ }
+    updateLockHint();
+    return;
+  }
+  if (phase !== 'playing') return;
+  paused = true;
+  keys.clear(); // no stuck movement keys while frozen
+  if (pointerLocked) document.exitPointerLock();
+  ui.showPause();
+  sfx.click();
+  updateLockHint();
+}
+
 // -- Combat glue --------------------------------------------------------------
 // The hunter reports a swing; this decides whether it hit the boss, and
 // whether the hit was on the head (horn damage) or the body.
-function onAttackHit(dmg, range) {
+function onAttackHit(dmg, range, kind) {
   if (!boss.alive) return;
   const toBoss = new THREE.Vector3().subVectors(boss.position, hunter.position);
   toBoss.y = 0;
@@ -247,6 +308,12 @@ function onAttackHit(dmg, range) {
   const result = boss.takeDamage(dmg, isHead);
   if (!result) return;
   sfx.hit();
+  // Hit-stop: freeze the game for a beat so the connect has weight.
+  hitStop = kind === 'heavy' ? CONFIG.hitStopHeavy : CONFIG.hitStopLight;
+  lastHitStop = hitStop;
+  // Impact sparks at the hit point, in the world, not on the HUD.
+  const hitPoint = isHead ? boss.headPos : boss.position.clone().setY(1.6);
+  effects.sparks(hitPoint, CONFIG.sparkCount);
   ui.damageNumber(boss.headPos, camera, String(dmg), isHead ? 'head' : 'hit');
   if (result.hornBroke) {
     ui.damageNumber(boss.headPos, camera, 'HORN BREAK!', 'break');
@@ -278,11 +345,15 @@ function startGame() {
   hunter.reset();
   boss.reset();
   locked = false;
+  paused = false;
+  hitStop = 0;
   elapsed = 0;
   endTimer = 0;
   camYaw = 0;
   camPitch = 0.35;
   camDist = 9;
+  camPosS = null; // snap the camera back behind the hunter
+  camLookS = null;
   phase = 'playing';
   ui.showGame();
   // Capture the mouse straight away (this is a user gesture, so the
@@ -297,6 +368,9 @@ function startGame() {
 
 document.getElementById('start-button').addEventListener('click', startGame);
 document.getElementById('retry-button').addEventListener('click', startGame);
+document.getElementById('pause-button').addEventListener('click', togglePause);
+document.getElementById('resume-button').addEventListener('click', togglePause);
+document.getElementById('pause-restart-button').addEventListener('click', startGame);
 document.getElementById('start-screen').addEventListener('click', (e) => {
   if (e.target.id === 'start-screen') startGame();
 });
@@ -307,7 +381,11 @@ let frames = 0;
 
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.05); // clamp huge steps (tab switches)
+  const rawDt = Math.min(clock.getDelta(), 0.05); // clamp huge steps (tab switches)
+  // Hit-stop: a landed hit freezes the game for a beat. The renderer
+  // still runs, so the frame is shown — nothing advances.
+  let dt = rawDt;
+  if (hitStop > 0) { hitStop -= rawDt; dt = 0; }
   frames++;
 
   input.forward = keys.has('KeyW') || keys.has('ArrowUp');
@@ -317,13 +395,16 @@ function animate() {
   input.camYaw = camYaw;
 
   // Q / E orbit the camera from the keyboard (breaks lock-on, like a drag).
-  if (keys.has('KeyQ')) { camYaw += dt * 1.8; locked = false; }
-  if (keys.has('KeyE')) { camYaw -= dt * 1.8; locked = false; }
+  if (!paused && keys.has('KeyQ')) { camYaw += dt * 1.8; locked = false; }
+  if (!paused && keys.has('KeyE')) { camYaw -= dt * 1.8; locked = false; }
   // Release the mouse when the fight is not running (menu / end screens).
   if (phase !== 'playing' && pointerLocked) document.exitPointerLock();
   updateLockHint();
 
-  if (phase === 'playing') {
+  if (paused) {
+    // Frozen: nothing advances — not the timer, not the hunter, not
+    // the boss, not the particles. The frame still renders.
+  } else if (phase === 'playing') {
     elapsed += dt;
     hunter.update(dt, input, {
       locked,
@@ -334,6 +415,7 @@ function animate() {
     boss.update(dt, hunter, {
       damageHunter,
       onShake: (n) => { shake = Math.max(shake, n); },
+      effects,
     });
     ui.update(hunter, boss, elapsed, locked);
   } else if (phase === 'won' || phase === 'lost') {
@@ -349,7 +431,8 @@ function animate() {
     boss.update(dt, hunter, { damageHunter: () => {}, onShake: () => {} });
   }
 
-  updateCamera(dt);
+  effects.update(paused ? 0 : dt);
+  updateCamera(paused ? 0 : dt);
   renderer.render(scene, camera);
   if (frames === 2) window.__hunterReady = true; // boot signal for tests
 }
@@ -373,6 +456,14 @@ window.__hunter = {
   get locked() { return locked; },
   get camYaw() { return camYaw; },
   get pointerLocked() { return pointerLocked; },
+  get paused() { return paused; },
+  get lastHitStop() { return lastHitStop; },
+  get particlesAlive() { return effects.aliveCount; },
+  get lastSparkCount() { return effects.lastSparkCount; },
+  get cameraPos() {
+    return { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+  },
+  togglePause,
   hunter,
   boss,
   start: startGame,

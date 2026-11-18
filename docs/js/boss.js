@@ -39,19 +39,21 @@ export class Boss {
     eyeR.position.x = 0.3;
     this.head.add(skull, snout, eyeL, eyeR);
 
-    // Horns: two curved cones. The left one is the breakable one.
+    // Horns: long cones swept up and back, so their pale tips break the
+    // body silhouette from behind as well as from the front. The left
+    // one is the breakable one.
     this.hornL = new THREE.Group();
-    this.hornL.position.set(-0.55, 0.25, -0.2);
-    const hornGeo = new THREE.ConeGeometry(0.16, 1.1, 8);
+    this.hornL.position.set(-0.55, 0.35, -0.2);
+    const hornGeo = new THREE.ConeGeometry(0.17, 1.8, 8);
     const hornLMesh = new THREE.Mesh(hornGeo, bone);
-    hornLMesh.rotation.z = 0.7;
-    hornLMesh.position.set(-0.35, 0.35, 0);
+    hornLMesh.rotation.set(0.55, 0, 0.85);
+    hornLMesh.position.set(-0.45, 0.5, 0.1);
     this.hornL.add(hornLMesh);
     this.hornR = new THREE.Group();
-    this.hornR.position.set(0.55, 0.25, -0.2);
+    this.hornR.position.set(0.55, 0.35, -0.2);
     const hornRMesh = new THREE.Mesh(hornGeo, bone);
-    hornRMesh.rotation.z = -0.7;
-    hornRMesh.position.set(0.35, 0.35, 0);
+    hornRMesh.rotation.set(0.55, 0, -0.85);
+    hornRMesh.position.set(0.45, 0.5, 0.1);
     this.hornR.add(hornRMesh);
     // Broken-horn stub, hidden until the horn snaps off.
     this.hornStub = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.3, 8), bone);
@@ -60,20 +62,43 @@ export class Boss {
     this.hornStub.visible = false;
     this.head.add(this.hornL, this.hornR, this.hornStub);
 
-    // Four legs, a tail, and a back ridge so the silhouette is not a blob.
+    // Four legs, set wide so they stand clear of the body from behind,
+    // with dark hooves so each leg reads as its own limb.
     this.legs = [];
-    for (const [x, z] of [[-0.9, -1.1], [0.9, -1.1], [-0.9, 1.1], [0.9, 1.1]]) {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 1.4, 8), darkHide);
+    for (const [x, z] of [[-1.15, -1.3], [1.15, -1.3], [-1.15, 1.3], [1.15, 1.3]]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.38, 1.4, 8), darkHide);
       leg.position.set(x, 0.7, z);
+      const hoof = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.25, 0.48), bone);
+      hoof.position.set(0, -0.72, 0);
+      leg.add(hoof);
       this.legs.push(leg);
       this.group.add(leg);
     }
+    // Tail raised and tipped up, so it reads from behind instead of
+    // disappearing under the body.
     const tail = new THREE.Mesh(new THREE.ConeGeometry(0.3, 1.6, 8), darkHide);
-    tail.rotation.x = Math.PI / 2 + 0.4;
-    tail.position.set(0, 1.5, 2.2);
-    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 2.2), darkHide);
-    ridge.position.set(0, 2.55, 0.3);
+    tail.rotation.x = Math.PI / 2 - 0.5;
+    tail.position.set(0, 1.9, 2.2);
+    // A tall back ridge with bone spikes along the spine — the topmost
+    // part of the silhouette from every angle.
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 2.2), darkHide);
+    ridge.position.set(0, 2.75, 0.3);
     this.group.add(this.body, this.head, tail, ridge);
+    this.spikes = [];
+    for (const z of [-0.6, 0.3, 1.2]) {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.7, 6), bone);
+      spike.position.set(0, 3.35, z);
+      spike.rotation.x = 0.35; // lean back, following the spine
+      this.spikes.push(spike);
+      this.group.add(spike);
+    }
+    // Shoulder humps at the front, so the body is not one smooth ball
+    // from the side.
+    this.shoulderL = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), darkHide);
+    this.shoulderL.position.set(-1.0, 2.2, -1.2);
+    this.shoulderR = this.shoulderL.clone();
+    this.shoulderR.position.x = 1.0;
+    this.group.add(this.shoulderL, this.shoulderR);
 
     // Stagger stars: small yellow spheres that orbit the head while the
     // boss is staggered, so the punish window is obvious.
@@ -88,11 +113,14 @@ export class Boss {
     this.stars.visible = false;
     this.group.add(this.stars);
 
-    // Shockwave ring for the stomp: a flat ring that grows outward.
+    // Shockwave ring for the stomp: a flat ring of kicked-up dust that
+    // grows outward with the shockwave. Muted tan, not a bright warning
+    // colour — it is the attack itself, ground being disturbed, not a
+    // UI marker drawn in advance.
     this.ring = new THREE.Mesh(
       new THREE.RingGeometry(0.85, 1, 48),
       new THREE.MeshBasicMaterial({
-        color: 0xffaa33, transparent: true, opacity: 0,
+        color: 0x9a7b4f, transparent: true, opacity: 0,
         side: THREE.DoubleSide, depthWrite: false,
       })
     );
@@ -100,9 +128,11 @@ export class Boss {
     this.ring.position.y = 0.06;
     scene.add(this.ring);
 
-    for (const m of [this.body, skull, snout, ...this.legs, tail, ridge]) m.castShadow = true;
+    for (const m of [this.body, skull, snout, ...this.legs, tail, ridge, this.shoulderL, this.shoulderR, ...this.spikes]) m.castShadow = true;
     scene.add(this.group);
 
+    this._dustT = 0;          // time since the last paw dust puff
+    this._chargeSnorted = false;
     this.reset();
   }
 
@@ -128,6 +158,18 @@ export class Boss {
     this.hornStub.visible = false;
     this.stars.visible = false;
     this.ring.material.opacity = 0;
+    this.group.rotation.x = 0;
+    this.group.rotation.z = 0;
+    this._chargeSnorted = false;
+    this._dustT = 0;
+    this._resetPose();
+  }
+
+  // Wind-up poses bend the head, body and legs out of their neutral
+  // shape; this puts everything back so the next move starts clean.
+  _resetPose() {
+    this.head.position.y = 1.9;
+    this.head.rotation.set(0, 0, 0);
     this.group.rotation.x = 0;
     this.group.rotation.z = 0;
   }
@@ -192,6 +234,7 @@ export class Boss {
     this.staggerDur = dur;
     this.stars.visible = true;
     this.bodyMat.emissive.setHex(0x000000);
+    this._resetPose();
     this.sfx.stagger();
   }
 
@@ -240,20 +283,54 @@ export class Boss {
       }
 
       case 'windup-charge': {
-        // Paw the ground: head down, body rocking, then GO.
-        this.head.position.y = 1.9 - Math.min(0.5, this.stateT * 0.8);
+        // The charge telegraph is the body itself: head drops low with
+        // the horns levelled at the hunter, the body leans forward, and
+        // the front legs paw the ground in turn, kicking up dust. A
+        // snort sounds once at the start of the wind-up.
+        if (!this._chargeSnorted) { this._chargeSnorted = true; this.sfx.snort(); }
+        const p = Math.min(1, this.stateT / (CONFIG.chargeWindup / this.speedMult));
+        this.head.position.y = 1.9 - 0.55 * p;
+        this.head.rotation.x = 0.45 * p;
+        this.group.rotation.x = 0.14 * p;
+        this.legs[0].rotation.x = Math.sin(this.stateT * 9) * 0.8;
+        this.legs[1].rotation.x = Math.sin(this.stateT * 9 + Math.PI) * 0.8;
+        this._dustT += dt;
+        if (this._dustT >= 0.28) {
+          this._dustT = 0;
+          for (const leg of [this.legs[0], this.legs[1]]) {
+            const wp = new THREE.Vector3();
+            leg.getWorldPosition(wp);
+            ctx.effects?.dust(new THREE.Vector3(wp.x, 0.15, wp.z), 4);
+          }
+        }
         this.group.rotation.y = turnTowards(this.group.rotation.y, faceHunter, dt * 1.5);
         if (this.stateT >= CONFIG.chargeWindup / this.speedMult) {
           this.chargeDir.copy(toHunter).normalize();
           this.state = 'charge';
           this.stateT = 0;
-          this.head.position.y = 1.9;
+          this._dustT = 0;
           this.bodyMat.emissive.setHex(0x000000);
         }
         break;
       }
 
       case 'charge': {
+        // Head stays low and the legs gallop; dust kicks up behind.
+        this.head.position.y = 1.5;
+        this.head.rotation.x = 0.35;
+        this.group.rotation.x = 0.1;
+        const g = Math.sin(this.stateT * 14);
+        this.legs[0].rotation.x = g * 0.7;
+        this.legs[3].rotation.x = g * 0.7;
+        this.legs[1].rotation.x = -g * 0.7;
+        this.legs[2].rotation.x = -g * 0.7;
+        this._dustT += dt;
+        if (this._dustT >= 0.15) {
+          this._dustT = 0;
+          const wp = new THREE.Vector3();
+          this.legs[2].getWorldPosition(wp);
+          ctx.effects?.dust(new THREE.Vector3(wp.x, 0.15, wp.z), 4);
+        }
         this.position.addScaledVector(this.chargeDir, CONFIG.chargeSpeed * dt);
         // Hitting the wall ends the charge in a stagger — the classic
         // "bait the charge" punish. Also ends after ~1.6s of running.
@@ -269,7 +346,14 @@ export class Boss {
       }
 
       case 'windup-sweep': {
-        this.head.position.y = 1.9 + Math.min(0.4, this.stateT * 0.8); // rear the head back
+        // The head rears back and the whole body twists to one side
+        // before the horns come through — the twist is the warning.
+        const p = Math.min(1, this.stateT / (CONFIG.sweepWindup / this.speedMult));
+        this.head.position.y = 1.9 + 0.45 * p;
+        this.head.rotation.y = -1.0 * p;
+        this.head.rotation.x = -0.25 * p;
+        this.group.rotation.z = 0.12 * p;
+        this.group.rotation.x = -0.06 * p;
         if (this.stateT >= CONFIG.sweepWindup / this.speedMult) {
           this.state = 'sweep';
           this.stateT = 0;
@@ -286,7 +370,10 @@ export class Boss {
 
       case 'sweep': {
         // The sweep itself is a fast head swing; recover shortly after.
+        this.head.position.y = 1.9;
+        this.head.rotation.x = 0;
         this.head.rotation.y = Math.sin(Math.min(1, this.stateT / 0.3) * Math.PI) * 1.2;
+        this.group.rotation.z *= 0.8;
         if (this.stateT >= 0.45) {
           this.head.rotation.y = 0;
           this._toIdle(1.2);
@@ -295,8 +382,14 @@ export class Boss {
       }
 
       case 'windup-stomp': {
-        // Rear up on the hind legs before slamming down.
-        this.group.rotation.x = -Math.min(0.35, this.stateT * 0.6);
+        // Rears up on the hind legs, front legs visibly raised, before
+        // slamming down.
+        const p = Math.min(1, this.stateT / (CONFIG.stompWindup / this.speedMult));
+        this.group.rotation.x = -0.38 * p;
+        this.head.position.y = 1.9 + 0.3 * p;
+        this.head.rotation.x = -0.3 * p;
+        this.legs[0].rotation.x = -1.0 * p;
+        this.legs[1].rotation.x = -1.0 * p;
         if (this.stateT >= CONFIG.stompWindup / this.speedMult) {
           this.group.rotation.x = 0;
           this.state = 'stomp';
@@ -304,6 +397,7 @@ export class Boss {
           this.bodyMat.emissive.setHex(0x000000);
           this.shock = { radius: 0, hitDone: false };
           this.ring.position.set(this.position.x, 0.06, this.position.z);
+          ctx.effects?.dust(new THREE.Vector3(this.position.x, 0.3, this.position.z), CONFIG.dustPuffCount);
           this.sfx.stomp();
           ctx.onShake(0.6);
         }
@@ -317,7 +411,7 @@ export class Boss {
           this.shock.radius += CONFIG.shockwaveSpeed * dt;
           const r = this.shock.radius;
           this.ring.scale.set(r, r, 1);
-          this.ring.material.opacity = Math.max(0, 0.8 - r / CONFIG.shockwaveMaxRadius);
+          this.ring.material.opacity = Math.max(0, 0.55 * (1 - r / CONFIG.shockwaveMaxRadius));
           if (!this.shock.hitDone && dist > r - 1.2 && dist < r + 1.2) {
             this.shock.hitDone = true;
             ctx.damageHunter(CONFIG.stompDmg, this.position);
@@ -354,13 +448,15 @@ export class Boss {
     collide(this.position, 1.8);
 
     // Walk-cycle leg swing while moving; idle breathing otherwise.
+    // Wind-up, charge, sweep and stomp poses own their leg angles, so
+    // the decay below only runs when the boss is idle or staggered.
     if (this.state === 'idle' && dist > 3.5) {
       const s = Math.sin(this.walkPhase);
       this.legs[0].rotation.x = s * 0.4;
       this.legs[3].rotation.x = s * 0.4;
       this.legs[1].rotation.x = -s * 0.4;
       this.legs[2].rotation.x = -s * 0.4;
-    } else {
+    } else if (this.state === 'idle' || this.state === 'staggered') {
       for (const leg of this.legs) leg.rotation.x *= 0.85;
       this.body.position.y = 1.6 + Math.sin(this.stateT * 2) * 0.03;
     }
@@ -390,7 +486,8 @@ export class Boss {
     this.state = 'idle';
     this.stateT = 0;
     this.decideT = cooldown;
-    this.head.position.y = 1.9;
+    this._chargeSnorted = false;
+    this._resetPose();
   }
 }
 

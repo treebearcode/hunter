@@ -7,13 +7,14 @@ import * as THREE from 'three';
 import { CONFIG } from './config.js';
 
 // Fixed obstacle layout, so the arena is the same every attempt.
-// { x, z, r } — position on the ground and the collision radius.
+// { x, z, r, h } — position, collision radius, and top height (the
+// camera checks `h` to know whether an obstacle can block its view).
 export const OBSTACLES = [
-  { x: -8, z: -6, r: 2.2 },
-  { x: 9, z: -8, r: 1.8 },
-  { x: -11, z: 7, r: 1.6 },
-  { x: 7, z: 9, r: 2.4 },
-  { x: 0, z: -13, r: 1.5 },
+  { x: -8, z: -6, r: 2.2, h: 2.9 },
+  { x: 9, z: -8, r: 1.8, h: 2.3 },
+  { x: -11, z: 7, r: 1.6, h: 2.1 },
+  { x: 7, z: 9, r: 2.4, h: 3.1 },
+  { x: 0, z: -13, r: 1.5, h: 2.0 },
 ];
 
 export function buildArena(scene) {
@@ -101,7 +102,7 @@ export function buildArena(scene) {
     pillar.castShadow = true;
     pillar.receiveShadow = true;
     scene.add(pillar);
-    OBSTACLES.push({ x, z, r: 1.3 });
+    OBSTACLES.push({ x, z, r: 1.3, h: 5 });
   }
 }
 

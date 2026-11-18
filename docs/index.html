@@ -17,6 +17,7 @@
     <div id="boss-name">GOREHORN</div>
     <div class="bar boss"><div id="boss-fill"></div></div>
   </div>
+  <button id="pause-button" type="button" title="Pause (P)">⏸</button>
   <div id="player-panel">
     <div class="bar hp"><div id="hp-fill"></div><span id="hp-text"></span></div>
     <div class="bar st"><div id="st-fill"></div></div>
@@ -28,7 +29,7 @@
   <div id="lock-hint" hidden>Click to capture the mouse — move the mouse to look around · Esc to release</div>
   <div id="controls-hint">
     WASD move · Mouse: look (click to capture) · Q / E or right-drag: orbit · Wheel: zoom · Tab / middle-click: lock-on<br />
-    Click / J: light attack (3-hit combo) · Right-click / K: heavy · Shift / Space: dodge roll · R: heal
+    Click / J: light attack (3-hit combo) · Right-click / K: heavy · Shift / Space: dodge roll · R: heal · P: pause
   </div>
 </div>
 <div id="damage-layer"></div>
@@ -50,9 +51,20 @@
       <tr><td>Right-click or K</td><td>Heavy attack</td></tr>
       <tr><td>Shift or Space</td><td>Dodge roll (i-frames)</td></tr>
       <tr><td>R</td><td>Heal (3 per attempt)</td></tr>
+      <tr><td>P or ⏸ button</td><td>Pause</td></tr>
     </table>
     <button id="start-button">ENTER THE ARENA</button>
     <p class="fine">Tip: bait the charge — when Gorehorn hits the wall, it staggers.</p>
+  </div>
+</div>
+
+<!-- Pause screen -->
+<div id="pause-screen" class="overlay" hidden>
+  <div class="panel">
+    <h1>PAUSED</h1>
+    <p class="sub">The hunt waits.</p>
+    <button id="resume-button">RESUME</button>
+    <button id="pause-restart-button">RESTART</button>
   </div>
 </div>
 

@@ -52,4 +52,14 @@ export const CONFIG = {
   hornBreakDmg: 150,        // damage dealt to the head before a horn breaks
   hornBreakStagger: 3.5,    // longer stagger when the horn snaps off
   enrageSpeedMult: 1.25,    // attacks ~25% faster while enraged
+
+  // -- Hit feel -------------------------------------------------------------
+  hitStopLight: 0.06,       // freeze on a landed light hit (seconds)
+  hitStopHeavy: 0.09,       // freeze on a landed heavy hit
+  sparkCount: 14,           // impact sparks per landed hit
+  dustPuffCount: 8,         // dust puffs per paw stamp / stomp burst
+
+  // -- Camera ---------------------------------------------------------------
+  cameraSmooth: 12,         // how fast the camera eases to its spot (per second)
+  cameraMinDist: 2.5,       // closest the camera is ever pulled in
 };
