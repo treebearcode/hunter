@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:," />
+<title>Hunter — Gorehorn Prototype</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+
+<!-- HUD -->
+<div id="hud" hidden>
+  <div id="boss-bar">
+    <div id="boss-name">GOREHORN</div>
+    <div class="bar boss"><div id="boss-fill"></div></div>
+  </div>
+  <div id="player-panel">
+    <div class="bar hp"><div id="hp-fill"></div><span id="hp-text"></span></div>
+    <div class="bar st"><div id="st-fill"></div></div>
+    <div id="heal-row">Heals <span id="heal-pips">✚✚✚</span> <span class="hint">(R)</span></div>
+    <div id="time-row">Time <span id="time-text">0:00</span></div>
+  </div>
+  <div id="lock-indicator" hidden>◉ LOCKED ON</div>
+  <div id="enrage-banner" hidden>GOREHORN IS ENRAGED</div>
+  <div id="controls-hint">
+    WASD move · Drag mouse: camera · Wheel: zoom · Tab / middle-click: lock-on<br />
+    Click / J: light attack (3-hit combo) · Right-click / K: heavy · Shift / Space: dodge roll · R: heal
+  </div>
+</div>
+<div id="damage-layer"></div>
+<div id="damage-flash"></div>
+
+<!-- Start screen -->
+<div id="start-screen" class="overlay">
+  <div class="panel">
+    <h1>HUNTER</h1>
+    <p class="sub">Prototype — one arena, one boss, one longsword</p>
+    <p>Face <strong>Gorehorn</strong>, the horned brute, alone in the ring.
+       Learn its tells. Dodge the charge. Break a horn. Don't get stepped on.</p>
+    <table class="controls">
+      <tr><td>WASD</td><td>Move (camera-relative)</td></tr>
+      <tr><td>Drag mouse / wheel</td><td>Orbit camera / zoom</td></tr>
+      <tr><td>Tab or middle-click</td><td>Lock on to Gorehorn</td></tr>
+      <tr><td>Click or J</td><td>Light attack — 3-hit combo</td></tr>
+      <tr><td>Right-click or K</td><td>Heavy attack</td></tr>
+      <tr><td>Shift or Space</td><td>Dodge roll (i-frames)</td></tr>
+      <tr><td>R</td><td>Heal (3 per attempt)</td></tr>
+    </table>
+    <button id="start-button">ENTER THE ARENA</button>
+    <p class="fine">Tip: bait the charge — when Gorehorn hits the wall, it staggers.</p>
+  </div>
+</div>
+
+<!-- Win / lose screen -->
+<div id="end-screen" class="overlay" hidden>
+  <div class="panel">
+    <h1 id="end-title">YOU DIED</h1>
+    <p id="end-stats"></p>
+    <button id="retry-button">HUNT AGAIN</button>
+  </div>
+</div>
+
+<!-- Shown ONLY if the game never starts (library load failure). -->
+<div id="bootfail" hidden>
+  The game couldn&rsquo;t start &mdash; a file it needs didn&rsquo;t load.
+  Check your connection, then close and reopen this page.
+</div>
+<!-- Shown ONLY if the running game throws an error. -->
+<div id="rerr" hidden></div>
+
+<script>
+  window.__hunterBoot = { booted: false };
+  window.__hunterShowFail = function (msg) {
+    var el = document.getElementById("bootfail");
+    if (!el || window.__hunterBoot.booted) return;
+    el.hidden = false;
+    if (msg) {
+      var p = document.createElement("p");
+      p.style.cssText = "font-size:13px;opacity:.75;word-break:break-word;";
+      p.textContent = String(msg);
+      el.appendChild(p);
+    }
+  };
+  window.addEventListener("error", function (e) {
+    if (!window.__hunterBoot.booted) { window.__hunterShowFail(e.message); return; }
+    var el = document.getElementById("rerr");
+    if (el) {
+      el.hidden = false;
+      el.textContent = "Game error: " + e.message + " @ " + (e.filename || "?") + ":" + (e.lineno || "?");
+    }
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var el = document.getElementById("rerr");
+    if (el && window.__hunterBoot.booted) {
+      el.hidden = false;
+      el.textContent = "Game error: " + (e.reason && e.reason.message ? e.reason.message : String(e.reason));
+    }
+  });
+</script>
+
+<!-- Three.js r160, loaded as an ES module through an import map.
+     Modules do NOT work by double-clicking (file:// blocks imports):
+     run a local server from docs/, e.g. `python3 -m http.server`,
+     or use VSCode Live Server. GitHub Pages serves these files as-is. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module" src="./js/main.js" onerror="window.__hunterShowFail('Could not load the game module — serve this folder over HTTP (python3 -m http.server in docs/), not file://.')"></script>
+<script>
+  // Mark the boot as successful once the module has had a chance to run.
+  // main.js sets window.__hunterReady after its first frames; this just
+  // clears the "never started" guard so a later error goes to the banner.
+  document.addEventListener("DOMContentLoaded", function () {
+    setTimeout(function () {
+      if (window.__hunterReady) window.__hunterBoot.booted = true;
+    }, 3000);
+  });
+</script>
+</body>
+</html>
