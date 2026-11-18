@@ -27,9 +27,14 @@ Play it: https://treebearcode.github.io/hunter/ (GitHub Pages, served from `docs
 
 ## Controls
 
-WASD move · drag mouse to orbit the camera · wheel zooms · Tab or
+WASD move · mouse looks around once captured (click the canvas, Esc to
+release) · Q / E or right-drag orbits the camera · wheel zooms · Tab or
 middle-click toggles lock-on · click / J light attack · right-click / K
 heavy attack · Shift / Space dodge roll · R heal.
+
+Left click is only ever an attack — it never orbits the camera, so
+orbiting can no longer trigger a swing (and swinging can no longer
+swing the camera around).
 
 ## Running locally
 

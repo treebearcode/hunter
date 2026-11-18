@@ -82,9 +82,6 @@ function updateCamera(dt) {
 
 // -- Input --------------------------------------------------------------------
 const keys = new Set();
-let dragging = false;
-let dragMoved = 0;
-let dragStartT = 0;
 let lastX = 0, lastY = 0;
 
 const input = { forward: false, back: false, left: false, right: false, camYaw: 0 };
@@ -109,37 +106,79 @@ function toggleLock() {
   sfx.click();
 }
 
-// Mouse: drag orbits the camera. A quick click (short, barely moved) is
-// a light attack; right click is a heavy attack; middle click locks on.
+// Mouse — the old scheme overloaded the left button: drag orbited the
+// camera AND a quick click attacked, so every orbit risked a swing and
+// every swing risked moving the camera. The new scheme gives each
+// button exactly one job:
+//   * Pointer lock (click the canvas once to capture the mouse) is the
+//     primary camera: moving the mouse orbits, no button held.
+//     While locked, left click is ONLY a light attack, right click ONLY
+//     a heavy attack. Esc releases the mouse.
+//   * Right-drag is the fallback orbit (e.g. if pointer lock is denied):
+//     hold right mouse and drag to orbit; a quick right-click is heavy.
+//   * Q / E orbit the camera from the keyboard, no mouse needed.
+//   * Middle click still toggles lock-on. Touch is unchanged (drag
+//     orbits, tap attacks) — it never had the conflict, taps are taps.
+let pointerLocked = false;
+let rightDragging = false;
+let rightDragMoved = 0;
+let rightDragStartT = 0;
+
+const lockHint = document.getElementById('lock-hint');
+function updateLockHint() {
+  if (lockHint) lockHint.hidden = !(phase === 'playing' && !pointerLocked);
+}
+function applyMouseLook(dx, dy) {
+  // Same orbit math the old drag used: mouse right turns the view
+  // right, mouse up looks up. Ignored while lock-on frames the boss.
+  if (locked && boss.alive) return;
+  camYaw -= dx * 0.003;
+  camPitch = Math.max(0.08, Math.min(1.1, camPitch + dy * 0.003));
+}
+document.addEventListener('pointerlockchange', () => {
+  pointerLocked = document.pointerLockElement === canvas;
+  updateLockHint();
+});
 canvas.addEventListener('mousedown', (e) => {
   if (phase !== 'playing') return;
   if (e.button === 0) {
-    dragging = true;
-    dragMoved = 0;
-    dragStartT = performance.now();
-    lastX = e.clientX; lastY = e.clientY;
+    if (!pointerLocked) {
+      // First click captures the mouse; it is NOT an attack.
+      // (Chrome rejects a re-lock for ~1s after Esc — swallow that
+      // rejection; the hint stays up and the next click retries.)
+      const p = canvas.requestPointerLock();
+      if (p && p.catch) p.catch(() => {});
+      return;
+    }
+    hunter.tryLight();
   } else if (e.button === 2) {
-    hunter.tryHeavy();
+    rightDragging = true;
+    rightDragMoved = 0;
+    rightDragStartT = performance.now();
+    lastX = e.clientX; lastY = e.clientY;
   } else if (e.button === 1) {
     e.preventDefault();
     toggleLock();
   }
 });
 window.addEventListener('mousemove', (e) => {
-  if (!dragging) return;
+  if (pointerLocked) {
+    applyMouseLook(e.movementX || 0, e.movementY || 0);
+    return;
+  }
+  if (!rightDragging) return;
   const dx = e.clientX - lastX, dy = e.clientY - lastY;
   lastX = e.clientX; lastY = e.clientY;
-  dragMoved += Math.abs(dx) + Math.abs(dy);
-  camYaw -= dx * 0.005;
-  camPitch = Math.max(0.08, Math.min(1.1, camPitch + dy * 0.004));
-  if (dragMoved > 6) locked = false; // manual orbit breaks lock-on
+  rightDragMoved += Math.abs(dx) + Math.abs(dy);
+  applyMouseLook(dx * 1.6, dy * 1.3); // right-drag uses the old drag scale
+  if (rightDragMoved > 6) locked = false; // manual orbit breaks lock-on
 });
 window.addEventListener('mouseup', (e) => {
-  if (dragging && e.button === 0) {
-    // A click, not a drag: this is a light attack.
-    if (dragMoved < 6 && performance.now() - dragStartT < 300) hunter.tryLight();
+  if (rightDragging && e.button === 2) {
+    // A quick right-click, not a drag: this is a heavy attack.
+    if (rightDragMoved < 6 && performance.now() - rightDragStartT < 300) hunter.tryHeavy();
   }
-  dragging = false;
+  rightDragging = false;
 });
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
@@ -246,6 +285,14 @@ function startGame() {
   camDist = 9;
   phase = 'playing';
   ui.showGame();
+  // Capture the mouse straight away (this is a user gesture, so the
+  // browser allows it). If it is refused, the lock hint tells the
+  // player to click the canvas, and right-drag still orbits.
+  try {
+    const p = canvas.requestPointerLock();
+    if (p && p.catch) p.catch(() => {});
+  } catch (_) { /* hint covers it */ }
+  updateLockHint();
 }
 
 document.getElementById('start-button').addEventListener('click', startGame);
@@ -268,6 +315,13 @@ function animate() {
   input.left = keys.has('KeyA') || keys.has('ArrowLeft');
   input.right = keys.has('KeyD') || keys.has('ArrowRight');
   input.camYaw = camYaw;
+
+  // Q / E orbit the camera from the keyboard (breaks lock-on, like a drag).
+  if (keys.has('KeyQ')) { camYaw += dt * 1.8; locked = false; }
+  if (keys.has('KeyE')) { camYaw -= dt * 1.8; locked = false; }
+  // Release the mouse when the fight is not running (menu / end screens).
+  if (phase !== 'playing' && pointerLocked) document.exitPointerLock();
+  updateLockHint();
 
   if (phase === 'playing') {
     elapsed += dt;
@@ -318,6 +372,7 @@ window.__hunter = {
   get elapsed() { return elapsed; },
   get locked() { return locked; },
   get camYaw() { return camYaw; },
+  get pointerLocked() { return pointerLocked; },
   hunter,
   boss,
   start: startGame,
@@ -347,6 +402,9 @@ window.__hunter = {
       hunter.position.set(x, 0, z);
     },
     setCamYaw(yaw) { camYaw = yaw; },
+    // Drive the pointer-lock orbit math without a real pointer lock
+    // (headless Chromium cannot lock the pointer the same way).
+    simulateMouseLook(dx, dy) { applyMouseLook(dx, dy); },
     pressKey(code) {
       keys.add(code);
       if (code === 'KeyR') hunter.tryHeal();
