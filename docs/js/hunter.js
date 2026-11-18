@@ -31,6 +31,20 @@ export class Hunter {
     const band = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.08, 0.36),
       new THREE.MeshStandardMaterial({ color: 0xd8b13a }));
     band.position.y = 1.82;
+    // Forward markers, on the hunter's front (+Z is forward): eyes and a
+    // nose on the face, and a gold buckle on the chest. The model used to
+    // be near-symmetric front-to-back, so from the camera you could not
+    // tell which way the hunter faced — these make forward obvious.
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
+    const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.02), eyeMat);
+    eyeL.position.set(-0.08, 1.75, 0.18);
+    const eyeR = eyeL.clone();
+    eyeR.position.x = 0.08;
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.04), skin);
+    nose.position.set(0, 1.68, 0.18);
+    const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.02),
+      new THREE.MeshStandardMaterial({ color: 0xd8b13a, metalness: 0.6, roughness: 0.4 }));
+    buckle.position.set(0, 0.95, 0.19);
     this.legL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.75, 0.24), dark);
     this.legL.position.set(-0.16, 0.38, 0);
     this.legR = this.legL.clone();
@@ -72,7 +86,7 @@ export class Hunter {
     for (const m of [this.torso, this.head, band, this.legL, this.legR, this.armL, armMesh, blade]) {
       m.castShadow = true;
     }
-    this.group.add(this.torso, this.head, band, this.legL, this.legR, this.armL, this.armR, this.arc);
+    this.group.add(this.torso, this.head, band, eyeL, eyeR, nose, buckle, this.legL, this.legR, this.armL, this.armR, this.arc);
     scene.add(this.group);
 
     this.reset();
@@ -203,9 +217,20 @@ export class Hunter {
     if (move.lengthSq() > 0) {
       move.normalize();
       // Rotate the camera-relative input into world space.
+      // The camera sits at hunter + (sin yaw, cos yaw) * dist, so the
+      // direction the camera looks (screen-up / W) is
+      //   forward F = (-sin yaw, -cos yaw)
+      // and screen-right (D) is
+      //   right   R = ( cos yaw, -sin yaw)
+      // W is input (0,-1), D is (+1,0), so world = mx*R + (-mz)*F, i.e.
+      //   wx = mx*cos + mz*sin,  wz = -mx*sin + mz*cos.
+      // (The old code had the signs flipped — a rotation by +yaw instead
+      // of -yaw — so at yaw 0 it was correct, but as soon as the camera
+      // orbited, W drifted sideways, up to 90 degrees off at yaw 45 deg
+      // and fully backwards at yaw 90 deg.)
       const sin = Math.sin(input.camYaw), cos = Math.cos(input.camYaw);
-      const wx = move.x * cos - move.z * sin;
-      const wz = move.x * sin + move.z * cos;
+      const wx = move.x * cos + move.z * sin;
+      const wz = -move.x * sin + move.z * cos;
       move.set(wx, 0, wz).normalize();
     }
     this.moving = move.lengthSq() > 0;

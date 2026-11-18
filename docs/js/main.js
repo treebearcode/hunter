@@ -176,9 +176,13 @@ function currentMoveDir() {
   if (keys.has('KeyD') || keys.has('ArrowRight')) m.x += 1;
   if (m.lengthSq() > 0) {
     m.normalize();
+    // Same camera-relative rotation as hunter.js: W must go along the
+    // camera's forward (-sin yaw, -cos yaw), D along its right
+    // (cos yaw, -sin yaw). See hunter.js for the derivation — the old
+    // signs here rotated the input the wrong way round.
     const sin = Math.sin(camYaw), cos = Math.cos(camYaw);
-    const wx = m.x * cos - m.z * sin;
-    const wz = m.x * sin + m.z * cos;
+    const wx = m.x * cos + m.z * sin;
+    const wz = -m.x * sin + m.z * cos;
     return new THREE.Vector3(wx, 0, wz).normalize();
   }
   // Standing still: roll backwards, away from where we face.
@@ -313,6 +317,7 @@ window.__hunter = {
   get phase() { return phase; },
   get elapsed() { return elapsed; },
   get locked() { return locked; },
+  get camYaw() { return camYaw; },
   hunter,
   boss,
   start: startGame,
@@ -341,6 +346,7 @@ window.__hunter = {
     teleportHunter(x, z) {
       hunter.position.set(x, 0, z);
     },
+    setCamYaw(yaw) { camYaw = yaw; },
     pressKey(code) {
       keys.add(code);
       if (code === 'KeyR') hunter.tryHeal();
