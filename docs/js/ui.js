@@ -11,6 +11,8 @@ export class UI {
     this.hpFill = this.el('hp-fill');
     this.hpText = this.el('hp-text');
     this.stFill = this.el('st-fill');
+    this.comboRow = this.el('combo-row');
+    this.comboCount = this.el('combo-count');
     this.healPips = this.el('heal-pips');
     this.bossFill = this.el('boss-fill');
     this.bossWrap = this.el('boss-bar');
@@ -28,6 +30,13 @@ export class UI {
     this.hpFill.style.width = hpPct + '%';
     this.hpText.textContent = `${Math.ceil(hunter.hp)} / ${CONFIG.hunterMaxHp}`;
     this.stFill.style.width = Math.max(0, hunter.stamina / CONFIG.staminaMax * 100) + '%';
+    // Light-combo counter (1/2/3) under the stamina bar; hidden when
+    // no combo is running.
+    const combo = hunter.comboDisplay || 0;
+    if (this.comboRow) {
+      this.comboRow.hidden = combo === 0;
+      if (combo > 0) this.comboCount.textContent = combo;
+    }
     this.healPips.textContent = '✚'.repeat(hunter.heals) + '○'.repeat(CONFIG.healCount - hunter.heals);
     this.bossFill.style.width = Math.max(0, boss.hp / CONFIG.bossMaxHp * 100) + '%';
     this.bossWrap.classList.toggle('enraged', boss.enraged);

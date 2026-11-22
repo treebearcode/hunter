@@ -1,18 +1,26 @@
 // boss.js — the Skeleton, a big undead brute (Quaternius Ultimate
 // Monsters, CC0). The boss is a small state machine: it idles / walks,
 // picks a move based on how far away the hunter is, telegraphs the move
-// (wind-up pose + glow + sound), then does it. Every big move is
+// (wind-up pose + sound + dust), then does it. Every big move is
 // dodgeable on purpose — deaths should feel like a mistimed dodge,
 // not a surprise.
 //
 // The skeleton is bipedal, so the moveset maps onto its clips: charge
-// runs on Skeleton_Running, the sweep and the stomp slam both use
-// Skeleton_Attack, the entrance is Skeleton_Spawn, death is
-// Skeleton_Death, and idle/walk use Skeleton_Idle / Skeleton_Running.
-// It has no walk clip (Running at low speed covers it) and no hit
-// clip — a hit just flashes the material, the skeleton does not flinch.
-// Telegraphs stay body language, as before: the skeleton leans and
-// twists into each move, kicks up dust, and glows — no floor markers.
+// runs on Skeleton_Running, the sweep, the stomp slam, the leap slam
+// and the spin all use Skeleton_Attack, the entrance is Skeleton_Spawn,
+// death is Skeleton_Death, and idle/walk use Skeleton_Idle /
+// Skeleton_Running. It has no walk clip (Running at low speed covers
+// it) and no hit clip — a hit flashes the skeleton WHITE, briefly, so
+// a landed hit never looks like a telegraph. Telegraphs stay body
+// language, as before: the skeleton leans and twists into each move,
+// kicks up dust, and plays a distinct sound cue per move — no glow,
+// no floor markers, and never a red flicker: the old red telegraph
+// glow is gone entirely. Enrage keeps a slow red pulse, dimmed so it
+// does not flicker.
+//
+// The boss body is solid: it pushes the hunter out to 2.0 m, no
+// damage. The only contact damage left is during a charge, where the
+// body itself is the telegraphed attack.
 //
 // Skull crack: the old horn-break mechanic, re-skinned honestly. The
 // skeleton has no horns, so head hits damage its skull; after 150 head
@@ -85,6 +93,11 @@ export class Boss {
 
     this._dustT = 0;          // time since the last paw dust puff
     this._chargeSnorted = false;
+    this._flashT = 0;         // seconds left of the white hit flash
+    this._hitFlashSeen = false; // sticky: a hit flashed white (test hook)
+    this._spinHitDone = false;
+    this._leapFrom = null;    // leap start / target, set at windup end
+    this._leapTo = null;
     this.reset();
   }
 
@@ -126,7 +139,8 @@ export class Boss {
     this.hp = CONFIG.bossMaxHp;
     this.state = 'intro'; // intro | idle | windup-charge | charge |
                           // windup-sweep | sweep | windup-stomp | stomp |
-                          // staggered | dead
+                          // windup-leap | leap | leap-shock |
+                          // windup-spin | spin | staggered | dead
     this.stateT = 0;
     this.decideT = 1.0;  // idle time before the first move is picked
     this.poise = 0;
@@ -135,7 +149,7 @@ export class Boss {
     this.enraged = false;
     this.chargeDir = new THREE.Vector3(0, 0, 1);
     this.contactT = 0;
-    this.shock = null; // { radius, hitDone } while a shockwave is expanding
+    this.shock = null; // { radius, hitDone, dmg } while a shockwave expands
     this.facing = 0;
     this.stars.visible = false;
     this.ring.material.opacity = 0;
@@ -143,6 +157,11 @@ export class Boss {
     this.group.rotation.z = 0;
     this._chargeSnorted = false;
     this._dustT = 0;
+    this._flashT = 0;
+    this._hitFlashSeen = false;
+    this._spinHitDone = false;
+    this._leapFrom = null;
+    this._leapTo = null;
     this._resetPose();
     if (this.bodyMat) this.bodyMat.emissive.setHex(0x000000);
     // The entrance: the skeleton rises (Spawn clip), then the fight starts.
@@ -171,6 +190,8 @@ export class Boss {
   get sweepRange() {
     return this.skullBroken ? CONFIG.sweepRangeBroken : CONFIG.sweepRange;
   }
+  // Sticky, for headless checks: true once a hit has flashed white.
+  get hitFlashSeen() { return this._hitFlashSeen; }
   // Enrage makes every windup ~25% shorter.
   get speedMult() { return this.enraged ? CONFIG.enrageSpeedMult : 1; }
   // Which clip is playing, for headless checks.
@@ -207,6 +228,11 @@ export class Boss {
     if (!this.alive) return null;
     this.hp = Math.max(0, this.hp - dmg);
     this.poise += dmg;
+    // A hit flashes the skeleton WHITE, briefly — the only flash in
+    // the game. Tells are body language, never a glow, so a white
+    // flash can only ever mean "your sword connected".
+    this._flashT = 0.12;
+    this._hitFlashSeen = true;
     let skullBroke = false;
     if (isHead && !this.skullBroken) {
       this.skullHp -= dmg;
@@ -251,14 +277,16 @@ export class Boss {
     this.sfx.stagger();
   }
 
-  // Telegraph: glow the body + play the cue so the player knows a big
-  // move is coming and can get ready to dodge. Kept dimmer than the old
-  // boss's glow — the pale bone-tan material picks up emissive much
-  // harder than Gorehorn's dark hide did, and a full-strength glow
-  // turned the whole skeleton bright red.
-  _telegraph() {
-    if (this.bodyMat) this.bodyMat.emissive.setHex(0x771500);
-    this.sfx.telegraph();
+  // Telegraph cue: one distinct sound per move, so the tell is audible
+  // as well as visible. No glow — the old red emissive is gone, it read
+  // as a random damage flash. Kept as one method so the move picker
+  // and the debug hook cue the same way.
+  _cue(move) {
+    if (move === 'charge') this.sfx.cueCharge();
+    else if (move === 'sweep') this.sfx.cueSweep();
+    else if (move === 'stomp') this.sfx.cueStomp();
+    else if (move === 'leap') this.sfx.cueLeap();
+    else if (move === 'spin') this.sfx.cueSpin();
   }
 
   // Dust at the skeleton's feet: `fwd` metres in front of the body,
@@ -275,6 +303,23 @@ export class Boss {
     this.stateT += dt;
     this.contactT = Math.max(0, this.contactT - dt);
     if (this.mixer) this.mixer.update(dt);
+    // The white hit flash owns the emissive while it runs; otherwise
+    // the enraged pulse (dimmed further, so it never flickers) or
+    // plain bone. Nothing here ever glows red on a windup. The timer
+    // is decremented BEFORE the emissive is picked, so the frame that
+    // ends the flash already shows the pulse/black — otherwise the
+    // skeleton would sit white for a whole extra frame.
+    if (this._flashT > 0) this._flashT -= dt;
+    if (this.bodyMat) {
+      if (this._flashT > 0) {
+        this.bodyMat.emissive.setHex(0xffffff);
+      } else if (this.enraged && this.state !== 'staggered' && this.state !== 'dead') {
+        const pulse = 0.10 + 0.06 * Math.sin(this.stateT * 6);
+        this.bodyMat.emissive.setRGB(pulse, pulse * 0.15, 0);
+      } else {
+        this.bodyMat.emissive.setHex(0x000000);
+      }
+    }
     if (this.state === 'dead') {
       // The Death clip plays the collapse; the body lies still after.
       return;
@@ -285,14 +330,6 @@ export class Boss {
     const dist = toHunter.length();
     // The skeleton faces +Z, same as the hunter: no extra rotation.
     const faceHunter = Math.atan2(toHunter.x, toHunter.z);
-
-    // Enraged bosses pulse red — readable at a glance, even mid-fight.
-    // Same note as the telegraph: kept dim, the bone picks it up hard.
-    if (this.bodyMat && this.enraged && this.state !== 'staggered') {
-      const pulse = 0.18 + 0.12 * Math.sin(this.stateT * 6);
-      this.bodyMat.emissive.setHex(0x000000);
-      this.bodyMat.emissive.setRGB(pulse, pulse * 0.15, 0);
-    }
 
     switch (this.state) {
       case 'intro': {
@@ -319,9 +356,8 @@ export class Boss {
       case 'windup-charge': {
         // The charge telegraph is the body itself: the skeleton crouches
         // low and leans forward, feet stamping the ground and kicking up
-        // dust. A snort sounds once at the start of the wind-up.
+        // dust. The snort sounded once when the move was picked (_cue).
         this._playClip('Skeleton_Idle', { loop: true, rate: 1, fade: 0.15 });
-        if (!this._chargeSnorted) { this._chargeSnorted = true; this.sfx.snort(); }
         const p = Math.min(1, this.stateT / (CONFIG.chargeWindup / this.speedMult));
         this.group.rotation.x = 0.14 * p;
         this.group.position.y = -0.25 * p;
@@ -338,7 +374,6 @@ export class Boss {
           this.stateT = 0;
           this._dustT = 0;
           this.group.position.y = 0;
-          if (this.bodyMat) this.bodyMat.emissive.setHex(0x000000);
           this._replayClip('Skeleton_Running', { loop: true, rate: 1.8, fade: 0.1 });
         }
         break;
@@ -367,19 +402,28 @@ export class Boss {
       }
 
       case 'windup-sweep': {
-        // The skeleton twists away to one side, bone club winding up
-        // behind it — the twist is the warning.
+        // Sweep = LOW twist: the skeleton twists away to one side, bone
+        // club dragging low behind it, then a fast horizontal swing.
+        // The twist is roughly double the old one, so it reads.
         this._playClip('Skeleton_Idle', { loop: true, rate: 1, fade: 0.15 });
         const p = Math.min(1, this.stateT / (CONFIG.sweepWindup / this.speedMult));
-        this.group.rotation.z = 0.12 * p;
-        this.group.rotation.x = -0.06 * p;
-        this.group.rotation.y = turnTowards(this.group.rotation.y, faceHunter - 0.9 * p, dt * 1.5);
+        this.group.rotation.z = 0.24 * p;
+        this.group.rotation.x = -0.12 * p;
+        this.group.rotation.y = turnTowards(this.group.rotation.y, faceHunter - 1.2 * p, dt * 1.5);
+        this._dustT += dt;
+        if (this._dustT >= 0.28) {
+          this._dustT = 0;
+          this._footDust(ctx, 0.6, -0.4);
+          this._footDust(ctx, 0.6, 0.4);
+        }
         if (this.stateT >= CONFIG.sweepWindup / this.speedMult) {
           this.group.rotation.y = faceHunter;
+          this.group.rotation.z = 0;
+          this.group.rotation.x = 0;
           this.state = 'sweep';
           this.stateT = 0;
-          if (this.bodyMat) this.bodyMat.emissive.setHex(0x000000);
-          this._replayClip('Skeleton_Attack', { loop: false, clamp: true, fade: 0.05, rate: 2.0 });
+          this._dustT = 0;
+          this._replayClip('Skeleton_Attack', { loop: false, clamp: true, fade: 0.05, rate: 2.6 });
           // The hit is checked once, at the moment the club sweeps through.
           const inFront = Math.abs(angleDiff(this.group.rotation.y, faceHunter)) < 1.9;
           if (dist < this.sweepRange && inFront) {
@@ -399,17 +443,25 @@ export class Boss {
       }
 
       case 'windup-stomp': {
-        // Rears back, arms rising, before slamming down.
+        // Stomp = HIGH rear-up: the skeleton rears back, arms rising,
+        // before slamming down. Roughly double the old rear-up, so the
+        // stomp never looks like the sweep's low twist.
         this._playClip('Skeleton_Idle', { loop: true, rate: 1, fade: 0.15 });
         const p = Math.min(1, this.stateT / (CONFIG.stompWindup / this.speedMult));
-        this.group.rotation.x = -0.38 * p;
+        this.group.rotation.x = -0.7 * p;
+        this._dustT += dt;
+        if (this._dustT >= 0.28) {
+          this._dustT = 0;
+          this._footDust(ctx, 0.6, -0.4);
+          this._footDust(ctx, 0.6, 0.4);
+        }
         if (this.stateT >= CONFIG.stompWindup / this.speedMult) {
           this.group.rotation.x = 0;
           this.state = 'stomp';
           this.stateT = 0;
-          if (this.bodyMat) this.bodyMat.emissive.setHex(0x000000);
-          this._replayClip('Skeleton_Attack', { loop: false, clamp: true, fade: 0.05, rate: 2.0 });
-          this.shock = { radius: 0, hitDone: false };
+          this._dustT = 0;
+          this._replayClip('Skeleton_Attack', { loop: false, clamp: true, fade: 0.05, rate: 1.6 });
+          this.shock = { radius: 0, hitDone: false, dmg: CONFIG.stompDmg };
           this.ring.position.set(this.position.x, 0.06, this.position.z);
           ctx.effects?.dust(new THREE.Vector3(this.position.x, 0.3, this.position.z), CONFIG.dustPuffCount);
           this.sfx.stomp();
@@ -421,20 +473,100 @@ export class Boss {
       case 'stomp': {
         // The ring expands; the hunter is hit once, the moment the ring
         // passes under them — roll through it, don't outrun it.
-        if (this.shock) {
-          this.shock.radius += CONFIG.shockwaveSpeed * dt;
-          const r = this.shock.radius;
-          this.ring.scale.set(r, r, 1);
-          this.ring.material.opacity = Math.max(0, 0.55 * (1 - r / CONFIG.shockwaveMaxRadius));
-          if (!this.shock.hitDone && dist > r - 1.2 && dist < r + 1.2) {
-            this.shock.hitDone = true;
-            ctx.damageHunter(CONFIG.stompDmg, this.position);
-          }
-          if (r >= CONFIG.shockwaveMaxRadius) {
-            this.shock = null;
-            this.ring.material.opacity = 0;
-            this._toIdle(1.4);
-          }
+        if (this._updateShock(dt, dist, ctx)) this._toIdle(1.4);
+        break;
+      }
+
+      case 'windup-leap': {
+        // Leap slam: a deep crouch, lower than the charge's, coiling
+        // down before the jump. Dust kicks up from the feet.
+        this._playClip('Skeleton_Idle', { loop: true, rate: 1, fade: 0.15 });
+        const p = Math.min(1, this.stateT / (CONFIG.leapWindup / this.speedMult));
+        this.group.rotation.x = 0.28 * p;
+        this.group.position.y = -0.45 * p;
+        this._dustT += dt;
+        if (this._dustT >= 0.28) {
+          this._dustT = 0;
+          this._footDust(ctx, 0.6, -0.4);
+          this._footDust(ctx, 0.6, 0.4);
+        }
+        this.group.rotation.y = turnTowards(this.group.rotation.y, faceHunter, dt * 1.5);
+        if (this.stateT >= CONFIG.leapWindup / this.speedMult) {
+          // Aim at where the hunter is standing as the jump starts.
+          this._leapFrom = this.position.clone();
+          this._leapTo = hunter.position.clone().setY(0);
+          this.state = 'leap';
+          this.stateT = 0;
+          this._dustT = 0;
+          this.group.position.y = 0;
+          this.group.rotation.x = 0;
+          this._replayClip('Skeleton_Attack', { loop: false, clamp: true, fade: 0.05, rate: 1.5 });
+        }
+        break;
+      }
+
+      case 'leap': {
+        // An arc towards the hunter: up, over, and down on top of them.
+        const t = Math.min(1, this.stateT / CONFIG.leapTime);
+        if (this._leapFrom && this._leapTo) {
+          this.position.lerpVectors(this._leapFrom, this._leapTo, t);
+        }
+        this.group.position.y = CONFIG.leapHeight * 4 * t * (1 - t);
+        if (t >= 1) {
+          this.group.position.y = 0;
+          this.state = 'leap-shock';
+          this.stateT = 0;
+          this.shock = { radius: 0, hitDone: false, dmg: CONFIG.leapDmg };
+          this.ring.position.set(this.position.x, 0.06, this.position.z);
+          ctx.effects?.dust(new THREE.Vector3(this.position.x, 0.3, this.position.z), CONFIG.dustPuffCount + 4);
+          this.sfx.stomp();
+          ctx.onShake(0.6);
+        }
+        break;
+      }
+
+      case 'leap-shock': {
+        // The landing shockwave, same ring as the stomp.
+        if (this._updateShock(dt, dist, ctx)) this._toIdle(1.4);
+        break;
+      }
+
+      case 'windup-spin': {
+        // Spin sweep: the skeleton twists hard away, club out wide,
+        // winding up for a full 360-degree turn.
+        this._playClip('Skeleton_Idle', { loop: true, rate: 1, fade: 0.15 });
+        const p = Math.min(1, this.stateT / (CONFIG.spinWindup / this.speedMult));
+        this.group.rotation.z = 0.2 * p;
+        this.group.rotation.y = turnTowards(this.group.rotation.y, faceHunter - 1.2 * p, dt * 1.5);
+        this._dustT += dt;
+        if (this._dustT >= 0.28) {
+          this._dustT = 0;
+          this._footDust(ctx, 0.6, -0.4);
+          this._footDust(ctx, 0.6, 0.4);
+        }
+        if (this.stateT >= CONFIG.spinWindup / this.speedMult) {
+          this.group.rotation.z = 0;
+          this.state = 'spin';
+          this.stateT = 0;
+          this._dustT = 0;
+          this._spinHitDone = false;
+          this._replayClip('Skeleton_Attack', { loop: false, clamp: true, fade: 0.05, rate: 1.4 });
+          this.sfx.swing();
+        }
+        break;
+      }
+
+      case 'spin': {
+        // One full turn with the club out, hits all around. The hit is
+        // checked once, halfway through the turn, when the club comes
+        // around to the hunter's side.
+        this.group.rotation.y += (Math.PI * 2 / CONFIG.spinTime) * dt;
+        if (!this._spinHitDone && this.stateT >= CONFIG.spinTime * 0.5) {
+          this._spinHitDone = true;
+          if (dist < this.sweepRange) ctx.damageHunter(CONFIG.spinDmg, this.position);
+        }
+        if (this.stateT >= CONFIG.spinTime) {
+          this._toIdle(1.2);
         }
         break;
       }
@@ -452,34 +584,64 @@ export class Boss {
       }
     }
 
-    // Contact damage: brushing the body hurts a little, so standing
-    // inside the boss is never free. Cooldown keeps it from melting HP.
-    if (this.alive && this.state !== 'staggered' && dist < 2.2 && this.contactT <= 0) {
+    // Contact damage exists ONLY during a charge, where the body itself
+    // is the telegraphed attack. Everywhere else the body is solid: it
+    // pushes the hunter out to 2.0 m, no damage — standing next to the
+    // skeleton is never a damage-over-time trap. No push-out while the
+    // boss is staggered (that is the punish window), mid-charge, or
+    // mid-leap (it is airborne and moving fast).
+    if (this.alive && this.state === 'charge' && dist < 2.2 && this.contactT <= 0) {
       this.contactT = CONFIG.bossContactCooldown;
       ctx.damageHunter(CONFIG.bossContactDmg, this.position);
+    }
+    const noPush = ['charge', 'leap', 'staggered', 'dead', 'intro'].includes(this.state);
+    if (this.alive && !noPush && dist > 0.01 && dist < CONFIG.bossBodyRadius) {
+      const push = toHunter.clone().normalize().multiplyScalar(CONFIG.bossBodyRadius - dist);
+      hunter.position.add(push);
+      collide(hunter.position, 0.5);
     }
 
     collide(this.position, 1.8);
   }
 
+  // Expand a shockwave ring (stomp landing or leap landing): the hunter
+  // is hit once, the moment the ring passes under them. Returns true
+  // when the ring has finished expanding.
+  _updateShock(dt, dist, ctx) {
+    if (!this.shock) return true;
+    this.shock.radius += CONFIG.shockwaveSpeed * dt;
+    const r = this.shock.radius;
+    this.ring.scale.set(r, r, 1);
+    this.ring.material.opacity = Math.max(0, 0.55 * (1 - r / CONFIG.shockwaveMaxRadius));
+    if (!this.shock.hitDone && dist > r - 1.2 && dist < r + 1.2) {
+      this.shock.hitDone = true;
+      ctx.damageHunter(this.shock.dmg, this.position);
+    }
+    if (r >= CONFIG.shockwaveMaxRadius) {
+      this.shock = null;
+      this.ring.material.opacity = 0;
+      return true;
+    }
+    return false;
+  }
+
   _pickMove(dist) {
-    // Far away: charge in. Close: sweep or stomp. Never attack twice in
+    // Far away: charge in. Mid range: leap in, or charge, or stomp.
+    // Close: spin (all around), sweep, or stomp. Never attack twice in
     // a row without a breather — the cooldown is the player's opening.
     const roll = Math.random();
+    let move;
     if (dist > 9) {
-      this.state = 'windup-charge';
-      this._telegraph();
-    } else if (dist < 4.5 && roll < 0.55) {
-      this.state = 'windup-sweep';
-      this._telegraph();
-    } else if (roll < 0.75) {
-      this.state = 'windup-stomp';
-      this._telegraph();
+      move = 'charge';
+    } else if (dist >= 5) {
+      move = roll < 0.5 ? 'leap' : roll < 0.8 ? 'charge' : 'stomp';
     } else {
-      this.state = 'windup-charge';
-      this._telegraph();
+      move = roll < 0.3 ? 'spin' : roll < 0.65 ? 'sweep' : 'stomp';
     }
+    this.state = 'windup-' + move;
     this.stateT = 0;
+    this._dustT = 0;
+    this._cue(move);
   }
 
   _toIdle(cooldown) {

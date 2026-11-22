@@ -8,11 +8,13 @@
 // skeleton; the sword is KayKit's sword_1handed, parented to the right
 // handslot bone. Movement and attack clips come from the KayKit
 // Character Animations pack (same Rig_Medium rig, so the clips retarget
-// onto the Knight with no edits). The clips run 1.0–1.6 s against the
-// game's 0.35 s / 0.7 s swing windows, so each clip is played sped up
-// to fit its window exactly — the full wind-up → strike → follow-through
-// still plays, just fast. Hit timing is unchanged: damage still lands
-// halfway through the swing, so combat feels identical to before.
+// onto the Knight with no edits). The attack clips run 1.0–1.6 s
+// against the game's 0.45–0.7 s swing windows, so each swing plays
+// only the strike portion of its clip (built with
+// THREE.AnimationUtils.subclip) at near-natural speed — the wind-up
+// and follow-through are trimmed, not fast-forwarded. Hit timing is
+// unchanged: damage still lands halfway through the swing, so combat
+// feels identical to before.
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -36,13 +38,24 @@ const ANIM_FILES = [
 ];
 
 // Light combo, one distinct 1H swing per hit: horizontal slice,
-// diagonal slice, overhead chop. Heavy: the big 2H chop.
+// diagonal slice, overhead chop. Heavy: the big 2H chop. Stab: the
+// 1H thrust, a chord move (Q+E / LMB+RMB), never part of the combo.
+// STRIKE_WINDOWS trims each clip to its strike portion, as a fraction
+// of the clip's duration: wind-up and follow-through are cut, the
+// strike plays at near-natural speed.
 const LIGHT_CLIPS = [
   'Melee_1H_Attack_Slice_Horizontal',
   'Melee_1H_Attack_Slice_Diagonal',
   'Melee_1H_Attack_Chop',
 ];
 const HEAVY_CLIP = 'Melee_2H_Attack_Chop';
+const STAB_CLIP = 'Melee_1H_Attack_Stab';
+const STRIKE_WINDOWS = {
+  'Melee_1H_Attack_Slice_Horizontal': [0.20, 0.70],
+  'Melee_1H_Attack_Slice_Diagonal': [0.25, 0.75],
+  'Melee_1H_Attack_Chop': [0.25, 0.80],
+  'Melee_1H_Attack_Stab': [0.30, 0.80],
+};
 
 export class Hunter {
   constructor(scene, sfx) {
@@ -91,6 +104,12 @@ export class Hunter {
     this._materials = [];   // Knight materials, for the hurt flash
     this._swordTip = null;  // Object3D markers on the blade, for the trail
     this._swordBase = null;
+    this._scene = scene;    // kept for dodge afterimages
+    this._fx = null;        // effects, picked up from ctx each frame
+    this._dodgeFov = 0;     // 1 at dodge start, decays after — camera kick
+    this._afterimages = []; // { mesh, life } fading dodge ghosts
+    this._dodgeGhostT = 0;  // time since the last ghost was spawned
+    this._dodgeLean = { x: 0, z: 0 }; // model lean into the dodge
     this.ready = this._loadModel(scene);
 
     this.reset();
@@ -106,6 +125,20 @@ export class Hunter {
       ]);
       for (const g of animGltfs) {
         for (const clip of g.animations) this.clips[clip.name] = clip;
+      }
+      // Strike portions: trim each light/stab clip to its strike window
+      // and store it under `<name>_strike`, so _playClip can use it
+      // like any other clip. Played at subclip.duration / swing time —
+      // near-natural speed, not a 3x fast-forward.
+      for (const [name, [a, b]] of Object.entries(STRIKE_WINDOWS)) {
+        const clip = this.clips[name];
+        if (!clip) continue;
+        const fps = 30;
+        const strike = THREE.AnimationUtils.subclip(
+          clip, name + '_strike',
+          Math.round(a * clip.duration * fps),
+          Math.round(b * clip.duration * fps), fps);
+        this.clips[name + '_strike'] = strike;
       }
       const model = knight.scene;
       model.scale.setScalar(KNIGHT_SCALE);
@@ -156,10 +189,11 @@ export class Hunter {
     this.heals = CONFIG.healCount;
     this.state = 'idle'; // idle | attack | dodge | heal | dead
     this.stateT = 0;     // time spent in the current state
-    this.attackKind = null; // 'light' | 'heavy'
+    this.attackKind = null; // 'light' | 'heavy' | 'stab'
     this.attackIndex = 0;   // which hit of the light combo (0, 1, 2)
     this.hitDone = false;   // the swing has already applied its damage
     this.comboQueued = false;
+    this.comboGrace = 0;    // seconds left of the post-swing chain window
     this.iframes = 0;       // > 0 while a dodge roll is protecting us
     this.hurtInvuln = 0;    // brief protection right after taking a hit
     this.staminaDelay = 0;  // time since stamina was last spent
@@ -170,7 +204,13 @@ export class Hunter {
     this._hitT = 0;
     this.trailSamples = [];
     this.trailMesh.visible = false;
+    this._dodgeFov = 0;
+    this._dodgeGhostT = 0;
+    this._dodgeLean = { x: 0, z: 0 };
     this._setFlash(false);
+    for (const g of this._afterimages) this._scene.remove(g.mesh);
+    this._afterimages = [];
+    if (this.model) { this.model.rotation.x = 0; this.model.rotation.z = 0; }
     if (this.mixer) this._playClip('Idle_A', { loop: true, rate: 1 });
   }
 
@@ -181,6 +221,18 @@ export class Hunter {
   get trailVisible() { return this.trailMesh.visible; }
   // Which clip is playing, for headless checks.
   get currentClip() { return this._currentClip; }
+  // FOV kick (0..1) for the camera while dodging, for headless checks.
+  get dodgeFov() { return this._dodgeFov; }
+  // Live dodge afterimages, for headless checks.
+  get afterimageCount() { return this._afterimages.length; }
+  // Combo counter for the HUD: 1/2/3 while swinging or inside the
+  // grace window after a light swing, 0 otherwise.
+  get comboDisplay() {
+    if (this.attackKind !== 'light') return 0;
+    if (this.state === 'attack') return this.attackIndex + 1;
+    if (this.comboGrace > 0) return this.attackIndex + 1;
+    return 0;
+  }
   // World position of the sword hand, for headless pose checks.
   get handWorldPos() {
     if (!this.model) return null;
@@ -231,11 +283,43 @@ export class Hunter {
     }
   }
 
+  // Which swing is playing, and how long it lasts. Light and stab use
+  // their strike-portion clips (near-natural speed); heavy plays the
+  // whole 2H chop sped up to its 0.7 s window, as before.
+  _attackClip() {
+    if (this.attackKind === 'heavy') {
+      const clip = this.clips[HEAVY_CLIP];
+      return { name: HEAVY_CLIP, rate: clip ? clip.duration / CONFIG.heavyTime : 1 };
+    }
+    if (this.attackKind === 'stab') {
+      const clip = this.clips[STAB_CLIP + '_strike'];
+      return { name: STAB_CLIP + '_strike', rate: clip ? clip.duration / CONFIG.stabTime : 1 };
+    }
+    const name = LIGHT_CLIPS[this.attackIndex] + '_strike';
+    const clip = this.clips[name];
+    return { name, rate: clip ? clip.duration / CONFIG.lightComboTime : 1 };
+  }
+  _attackDur() {
+    if (this.attackKind === 'heavy') return CONFIG.heavyTime;
+    if (this.attackKind === 'stab') return CONFIG.stabTime;
+    return CONFIG.lightComboTime;
+  }
+  // Exaggerated lean for the current swing, applied to the model (not
+  // the group — the group yaw is the facing). Horizontal = wide side
+  // arc, diagonal = cross-body, chop = overhead, stab = forward thrust.
+  _attackLean() {
+    if (this.attackKind === 'heavy') return { x: 0.35, z: 0.05 };
+    if (this.attackKind === 'stab') return { x: 0.22, z: 0 };
+    return [{ x: 0.05, z: 0.28 }, { x: 0.18, z: 0.22 }, { x: 0.30, z: 0.05 }][this.attackIndex];
+  }
+
   // Start a light swing. Called on a click; if we are mid-swing it queues
   // the next combo hit instead, which is how the 3-hit combo chains.
   // The buffer opens early (attackBufferStart into the swing), so a
   // press slightly before the current swing ends still chains — presses
-  // before that are dropped, not held forever.
+  // before that are dropped, not held forever. A press up to comboGrace
+  // AFTER a swing ends also still chains, so a slightly late click does
+  // not restart the combo at swing 1.
   tryLight() {
     if (!this.alive || this.state === 'dodge' || this.state === 'heal') return;
     if (this.state === 'attack') {
@@ -243,9 +327,19 @@ export class Hunter {
       return;
     }
     if (this.stamina < CONFIG.lightCost) return;
+    // Inside the grace window after a light swing: chain to the next
+    // hit instead of restarting at swing 1.
+    if (this.comboGrace > 0 && this.attackKind === 'light' && this.attackIndex < 2) {
+      this.comboGrace = 0;
+      this.attackIndex++;
+      this._spendStamina(CONFIG.lightCost);
+      this._beginAttack();
+      return;
+    }
     this._spendStamina(CONFIG.lightCost);
     this.attackKind = 'light';
     this.attackIndex = 0;
+    this.comboGrace = 0;
     this._beginAttack();
   }
 
@@ -254,7 +348,44 @@ export class Hunter {
     if (this.stamina < CONFIG.heavyCost) return;
     this._spendStamina(CONFIG.heavyCost);
     this.attackKind = 'heavy';
+    this.comboGrace = 0;
     this._beginAttack();
+  }
+
+  // The stab thrust: a standalone chord move, never part of the light
+  // combo. Only from idle — it is a deliberate poke, not a combo link.
+  tryStab() {
+    if (!this.alive || this.state !== 'idle') return;
+    if (this.stamina < CONFIG.stabCost) return;
+    this._spendStamina(CONFIG.stabCost);
+    this.attackKind = 'stab';
+    this.comboGrace = 0;
+    this._beginAttack();
+  }
+
+  // Chord conversion: the second half of a light+heavy chord (Q+E /
+  // LMB+RMB) lands while a light or heavy swing is still before its
+  // hit — turn that swing into a stab instead of starting a new one.
+  // The first press already fired a swing immediately (no input delay),
+  // so the chord has to convert it, not wait for it. Returns false if
+  // there is nothing to convert (too late, wrong state, no stamina).
+  tryConvertStab() {
+    if (!this.alive || this.state !== 'attack' || this.hitDone) return false;
+    if (this.attackKind !== 'light' && this.attackKind !== 'heavy') return false;
+    const spent = this.attackKind === 'light' ? CONFIG.lightCost : CONFIG.heavyCost;
+    const extra = CONFIG.stabCost - spent;
+    if (extra > 0 && this.stamina < extra) return false;
+    if (extra > 0) this._spendStamina(extra);
+    this.attackKind = 'stab';
+    this.stateT = 0;
+    this.hitDone = false;
+    this.attackFacingSnapped = false;
+    this.comboQueued = false;
+    this.comboGrace = 0;
+    const { name, rate } = this._attackClip();
+    this._replayClip(name, { loop: false, clamp: true, fade: 0.05, rate });
+    this._swingSound();
+    return true;
   }
 
   _beginAttack() {
@@ -262,27 +393,18 @@ export class Hunter {
     this.stateT = 0;
     this.hitDone = false;
     this.attackFacingSnapped = false;
-    if (this.attackKind === 'heavy') {
-      const clip = this.clips[HEAVY_CLIP];
-      this._replayClip(HEAVY_CLIP, {
-        loop: false, clamp: true, fade: 0.05,
-        rate: clip ? clip.duration / CONFIG.heavyTime : 1,
-      });
-    } else {
-      const name = LIGHT_CLIPS[this.attackIndex];
-      const clip = this.clips[name];
-      this._replayClip(name, {
-        loop: false, clamp: true, fade: 0.05,
-        rate: clip ? clip.duration / CONFIG.lightComboTime : 1,
-      });
-    }
+    const { name, rate } = this._attackClip();
+    this._replayClip(name, { loop: false, clamp: true, fade: 0.05, rate });
     this._swingSound();
   }
 
   // One whoosh per swing, pitched by which swing it is: the light combo
-  // rises 1.0 / 1.15 / 1.3, the heavy is low and deep at 0.7.
+  // rises 1.0 / 1.15 / 1.3, the heavy is low and deep at 0.7, the stab
+  // is lower and sharper than the combo at 0.85.
   _swingSound() {
-    const pitch = this.attackKind === 'heavy' ? 0.7 : [1.0, 1.15, 1.3][this.attackIndex];
+    const pitch = this.attackKind === 'heavy' ? 0.7
+      : this.attackKind === 'stab' ? CONFIG.stabPitch
+      : [1.0, 1.15, 1.3][this.attackIndex];
     this.sfx.swing(pitch);
   }
 
@@ -302,6 +424,20 @@ export class Hunter {
     this.state = 'dodge';
     this.stateT = 0;
     this.iframes = CONFIG.dodgeTime;
+    this.comboGrace = 0;
+    this._dodgeFov = 1; // camera FOV kick: the dodge should feel fast
+    this._dodgeGhostT = 0;
+    // Lean the model into the dodge direction: forward component tips
+    // it forward, sideways component tips it sideways.
+    const fwd0 = new THREE.Vector3(Math.sin(this.facing), 0, Math.cos(this.facing));
+    const right0 = new THREE.Vector3(fwd0.z, 0, -fwd0.x);
+    this._dodgeLean = {
+      x: 0.25 * this.rollDir.dot(fwd0),
+      z: -0.25 * this.rollDir.dot(right0),
+    };
+    // Dust burst at the dodge start, so the roll reads from the feet.
+    if (this._fx) this._fx.dust(this.position.clone().setY(0.15), CONFIG.dodgeDustCount);
+    this._spawnAfterimage();
     // The dodge clips are quick steps, not rolls: pick the one that
     // matches the roll direction relative to where we face.
     const fwd = new THREE.Vector3(Math.sin(this.facing), 0, Math.cos(this.facing));
@@ -324,6 +460,7 @@ export class Hunter {
     if (this.hp >= CONFIG.hunterMaxHp) return;
     this.state = 'heal';
     this.stateT = 0;
+    this.comboGrace = 0;
     const clip = this.clips['Use_Item'];
     this._replayClip('Use_Item', {
       loop: false, clamp: true, fade: 0.1,
@@ -331,8 +468,56 @@ export class Hunter {
     });
   }
 
-  // The boss (via main.js) calls this when a boss move connects.
-  // Returns true if the hit actually landed.
+  // A fading ghost of the Knight at the dodge position: a clone of the
+  // model with transparent materials, gone after afterimageLife.
+  _spawnAfterimage() {
+    if (!this.model || !this._scene) return;
+    const ghost = this.model.clone(true);
+    ghost.traverse((o) => {
+      if (o.isMesh) {
+        o.castShadow = false;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        o.material = mats.map((m) => {
+          const c = m.clone();
+          c.transparent = true;
+          c.opacity = 0.3;
+          c.depthWrite = false;
+          return c;
+        });
+        if (!Array.isArray(o.material)) o.material = o.material[0];
+      }
+    });
+    ghost.position.copy(this.group.position);
+    ghost.rotation.y = this.group.rotation.y;
+    ghost.scale.copy(this.model.scale);
+    this._scene.add(ghost);
+    this._afterimages.push({ mesh: ghost, life: CONFIG.afterimageLife });
+  }
+
+  _updateAfterimages(dt) {
+    for (let i = this._afterimages.length - 1; i >= 0; i--) {
+      const g = this._afterimages[i];
+      g.life -= dt;
+      if (g.life <= 0) {
+        this._scene.remove(g.mesh);
+        g.mesh.traverse((o) => {
+          if (o.isMesh) {
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            for (const m of mats) m.dispose();
+          }
+        });
+        this._afterimages.splice(i, 1);
+      } else {
+        const f = g.life / CONFIG.afterimageLife;
+        g.mesh.traverse((o) => {
+          if (o.isMesh) {
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            for (const m of mats) m.opacity = 0.3 * f;
+          }
+        });
+      }
+    }
+  }
   takeDamage(dmg, fromPos) {
     if (!this.alive || this.iframes > 0 || this.hurtInvuln > 0) return false;
     this.hp = Math.max(0, this.hp - dmg);
@@ -372,6 +557,12 @@ export class Hunter {
       this.stamina = Math.min(CONFIG.staminaMax, this.stamina + CONFIG.staminaRegen * dt);
     }
     this._hitT = Math.max(0, this._hitT - dt);
+    if (ctx.effects) this._fx = ctx.effects;
+    // Dodge FOV kick decays back to normal shortly after the roll.
+    this._dodgeFov = Math.max(0, this._dodgeFov - dt * 3);
+    this._updateAfterimages(dt);
+    // The grace window only runs while standing around, not mid-swing.
+    if (this.state !== 'attack') this.comboGrace = Math.max(0, this.comboGrace - dt);
     if (this.mixer) this.mixer.update(dt);
 
     if (!this.alive) return;
@@ -424,19 +615,34 @@ export class Hunter {
     // -- State machine ------------------------------------------------------
     if (this.state === 'dodge') {
       this.position.addScaledVector(this.rollDir, CONFIG.dodgeSpeed * dt);
+      // A second ghost halfway through the roll, so the afterimage
+      // stretches along the whole dodge path, not just its start.
+      this._dodgeGhostT += dt;
+      if (this._dodgeGhostT >= 0.17) {
+        this._dodgeGhostT = 0;
+        this._spawnAfterimage();
+      }
+      // Lean into the roll while it lasts.
+      if (this.model) {
+        this.model.rotation.x = this._dodgeLean.x;
+        this.model.rotation.z = this._dodgeLean.z;
+      }
       if (this.stateT >= CONFIG.dodgeTime) {
+        // Landing dust + a final ghost at the end of the path.
+        if (this._fx) this._fx.dust(this.position.clone().setY(0.15), CONFIG.dodgeDustCount);
+        this._spawnAfterimage();
         this.state = 'idle';
         this.stateT = 0;
       }
     } else if (this.state === 'attack') {
-      const dur = this.attackKind === 'light' ? CONFIG.lightComboTime : CONFIG.heavyTime;
+      const dur = this._attackDur();
       const hitAt = dur * 0.5; // the hit lands halfway through the swing
       if (!this.hitDone && this.stateT >= hitAt) {
         this.hitDone = true;
-        const dmg = this.attackKind === 'light'
-          ? CONFIG.lightComboDmg[this.attackIndex]
-          : CONFIG.heavyDmg;
-        const range = this.attackKind === 'light' ? CONFIG.lightRange : CONFIG.heavyRange;
+        const dmg = this.attackKind === 'light' ? CONFIG.lightComboDmg[this.attackIndex]
+          : this.attackKind === 'stab' ? CONFIG.stabDmg : CONFIG.heavyDmg;
+        const range = this.attackKind === 'light' ? CONFIG.lightRange
+          : this.attackKind === 'stab' ? CONFIG.stabRange : CONFIG.heavyRange;
         ctx.onAttackHit(dmg, range, this.attackKind);
       }
       // Lunge: a short step forward during the strike part of the swing,
@@ -445,11 +651,19 @@ export class Hunter {
       // bounds (collide, below) stop it leaving the ring.
       const p = this.stateT / dur;
       if (p >= CONFIG.lungeStart && p <= CONFIG.lungeEnd) {
-        const speed = this.attackKind === 'heavy' ? CONFIG.lungeHeavySpeed : CONFIG.lungeLightSpeed;
+        const speed = this.attackKind === 'heavy' ? CONFIG.lungeHeavySpeed
+          : this.attackKind === 'stab' ? CONFIG.lungeStabSpeed : CONFIG.lungeLightSpeed;
         const dir = new THREE.Vector3(Math.sin(this.group.rotation.y), 0, Math.cos(this.group.rotation.y));
         const next = this.position.clone().addScaledVector(dir, speed * dt);
         const bossXZ = ctx.bossPos ? new THREE.Vector3(ctx.bossPos.x, 0, ctx.bossPos.z) : null;
         if (!bossXZ || next.distanceTo(bossXZ) >= 2.0) this.position.copy(next);
+      }
+      // Exaggerated lean for this swing, so the three combo hits read
+      // as three different moves even at a glance.
+      if (this.model) {
+        const lean = this._attackLean();
+        this.model.rotation.x = lean.x;
+        this.model.rotation.z = lean.z;
       }
       if (this.stateT >= dur) {
         if (this.attackKind === 'light' && this.comboQueued && this.attackIndex < 2) {
@@ -460,15 +674,18 @@ export class Hunter {
           this.stateT = 0;
           this.hitDone = false;
           this.attackFacingSnapped = false;
-          const name = LIGHT_CLIPS[this.attackIndex];
-          const clip = this.clips[name];
-          this._replayClip(name, {
-            loop: false, clamp: true, fade: 0.05,
-            rate: clip ? clip.duration / CONFIG.lightComboTime : 1,
-          });
+          const { name, rate } = this._attackClip();
+          this._replayClip(name, { loop: false, clamp: true, fade: 0.05, rate });
           this._swingSound();
         } else {
           this.comboQueued = false;
+          // A light swing leaves a short grace window to chain late;
+          // heavy and stab just end the combo.
+          if (this.attackKind === 'light' && this.attackIndex < 2) {
+            this.comboGrace = CONFIG.comboGrace;
+          } else {
+            this.comboGrace = 0;
+          }
           this.state = 'idle';
           this.stateT = 0;
         }
@@ -505,17 +722,23 @@ export class Hunter {
       } else {
         this._playClip('Idle_A', { loop: true, rate: 1, fade: 0.15 });
       }
+      // Standing around again: the swing lean is over, stand straight.
+      if (this.model) {
+        this.model.rotation.x = 0;
+        this.model.rotation.z = 0;
+      }
     } else if (this.state === 'attack') {
       // Self-healing guard: if the model finished loading mid-swing
       // (or a debug hook started the swing before load), make sure the
       // right swing clip is playing. _playClip no-ops when it already is.
-      const name = this.attackKind === 'heavy' ? HEAVY_CLIP : LIGHT_CLIPS[this.attackIndex];
-      const clip = this.clips[name];
-      const dur = this.attackKind === 'heavy' ? CONFIG.heavyTime : CONFIG.lightComboTime;
-      this._playClip(name, {
-        loop: false, clamp: true, fade: 0.05,
-        rate: clip ? clip.duration / dur : 1,
-      });
+      const { name, rate } = this._attackClip();
+      this._playClip(name, { loop: false, clamp: true, fade: 0.05, rate });
+    } else if (this.state !== 'dodge' && this.model) {
+      // No swing and no dodge (heal, flinch): stand straight again.
+      // Dodge is excluded on purpose — its lean is set in the state
+      // machine above and must survive this section.
+      this.model.rotation.x = 0;
+      this.model.rotation.z = 0;
     }
 
     // Sword trail, sampled from the blade markers while swinging.

@@ -118,6 +118,13 @@ function updateCamera(dt) {
   if (locked && boss.alive) look.lerp(boss.position.clone().setY(1.6), 0.35);
   camLookS.lerp(look, dt > 0 ? k : 0);
   camera.position.copy(camPosS);
+  // Dodge FOV kick: the camera widens briefly during a roll, so the
+  // dodge feels fast even though its time and speed never change.
+  const wantFov = 60 + (hunter.dodgeFov || 0) * CONFIG.dodgeFovKick;
+  if (Math.abs(camera.fov - wantFov) > 0.01) {
+    camera.fov = wantFov;
+    camera.updateProjectionMatrix();
+  }
   if (shake > 0) {
     camera.position.x += (Math.random() - 0.5) * shake;
     camera.position.y += (Math.random() - 0.5) * shake;
@@ -127,21 +134,57 @@ function updateCamera(dt) {
 }
 
 // -- Input --------------------------------------------------------------------
+// Attack keys, parameterized in one place so the binding can change
+// with a one-line edit. Final bindings (Nov 22): F light, G heavy,
+// R heal; Q/E stay as camera orbit. J/K and the mouse (LMB light /
+// RMB heavy) keep working as before. The stab chord is F+G together
+// (or LMB+RMB while pointer-locked) — see attackPress().
+const KEY_LIGHT = 'KeyF';
+const KEY_HEAVY = 'KeyG';
+const KEY_HEAL = 'KeyR';
+
 const keys = new Set();
 let lastX = 0, lastY = 0;
 
 const input = { forward: false, back: false, left: false, right: false, camYaw: 0 };
 
+// Chord tracking: the second half of a light+heavy chord converts the
+// swing the first half already started into a stab, instead of the
+// chord waiting (the first press fires its swing immediately, so there
+// is no input delay to wait through). A chord only counts if the two
+// presses are the light+heavy pair, within 150 ms of each other.
+let lastAttackPress = { input: null, time: 0 };
+function attackPress(input, kind) {
+  const now = performance.now();
+  const chordPartner = {
+    [KEY_LIGHT]: KEY_HEAVY, [KEY_HEAVY]: KEY_LIGHT, LMB: 'RMB', RMB: 'LMB',
+  }[input];
+  if (chordPartner && lastAttackPress.input === chordPartner
+      && now - lastAttackPress.time <= 150
+      && hunter.tryConvertStab()) {
+    lastAttackPress = { input: null, time: 0 };
+    return;
+  }
+  lastAttackPress = { input, time: now };
+  if (kind === 'light') hunter.tryLight();
+  else hunter.tryHeavy();
+}
+
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Tab') { e.preventDefault(); toggleLock(); return; }
   if (e.code === 'KeyP') { togglePause(); return; }
   if (phase !== 'playing' || paused) return;
+  // Auto-repeat must never re-trigger an attack or a chord: holding F
+  // (or G, J, K) fires exactly one swing per physical press.
+  if (e.repeat && [KEY_LIGHT, KEY_HEAVY, 'KeyJ', 'KeyK'].includes(e.code)) return;
   keys.add(e.code);
-  if (e.code === 'KeyR') hunter.tryHeal();
+  if (e.code === KEY_HEAL) hunter.tryHeal();
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'Space') {
     e.preventDefault();
     hunter.tryDodge(currentMoveDir());
   }
+  if (e.code === KEY_LIGHT) attackPress(KEY_LIGHT, 'light');
+  if (e.code === KEY_HEAVY) attackPress(KEY_HEAVY, 'heavy');
   if (e.code === 'KeyJ') hunter.tryLight();
   if (e.code === 'KeyK') hunter.tryHeavy();
 });
@@ -170,6 +213,8 @@ let pointerLocked = false;
 let rightDragging = false;
 let rightDragMoved = 0;
 let rightDragStartT = 0;
+let lmbDown = false;
+let rmbDown = false;
 
 const lockHint = document.getElementById('lock-hint');
 function updateLockHint() {
@@ -189,16 +234,25 @@ document.addEventListener('pointerlockchange', () => {
 canvas.addEventListener('mousedown', (e) => {
   if (phase !== 'playing') return;
   if (e.button === 0) {
+    lmbDown = true;
     if (!pointerLocked) {
-      // First click captures the mouse; it is NOT an attack.
+      // First click captures the mouse; it is NOT an attack — and it
+      // can never be half of a stab chord either.
       // (Chrome rejects a re-lock for ~1s after Esc — swallow that
       // rejection; the hint stays up and the next click retries.)
       const p = canvas.requestPointerLock();
       if (p && p.catch) p.catch(() => {});
       return;
     }
-    hunter.tryLight();
+    attackPress('LMB', 'light');
   } else if (e.button === 2) {
+    rmbDown = true;
+    if (pointerLocked) {
+      // While locked, right click is ONLY a heavy attack (or half of
+      // the LMB+RMB stab chord) — never a drag orbit.
+      attackPress('RMB', 'heavy');
+      return;
+    }
     rightDragging = true;
     rightDragMoved = 0;
     rightDragStartT = performance.now();
@@ -221,9 +275,13 @@ window.addEventListener('mousemove', (e) => {
   if (rightDragMoved > 6) locked = false; // manual orbit breaks lock-on
 });
 window.addEventListener('mouseup', (e) => {
-  if (rightDragging && e.button === 2) {
-    // A quick right-click, not a drag: this is a heavy attack.
-    if (rightDragMoved < 6 && performance.now() - rightDragStartT < 300) hunter.tryHeavy();
+  if (e.button === 0) lmbDown = false;
+  if (e.button === 2) {
+    rmbDown = false;
+    // A quick right-click while NOT locked (drag fallback), not a drag:
+    // this is a heavy attack. While locked the heavy already fired on
+    // mousedown, so there is nothing to do here.
+    if (rightDragging && rightDragMoved < 6 && performance.now() - rightDragStartT < 300) hunter.tryHeavy();
   }
   rightDragging = false;
 });
@@ -326,14 +384,17 @@ function onAttackHit(dmg, range, kind) {
   // Hit-stop: freeze the game for a beat so the connect has weight.
   // This only runs on a landed hit — a whiff returns above, so a miss
   // never freezes the game.
-  hitStop = kind === 'heavy' ? CONFIG.hitStopHeavy : CONFIG.hitStopLight;
+  hitStop = kind === 'heavy' ? CONFIG.hitStopHeavy
+    : kind === 'stab' ? CONFIG.hitStopStab : CONFIG.hitStopLight;
   lastHitStop = hitStop;
   // Impact sparks at the hit point, in the world, not on the HUD.
   const hitPoint = isHead ? boss.headPos : boss.position.clone().setY(1.6);
   effects.sparks(hitPoint, CONFIG.sparkCount);
   // Heavier connect, heavier feel: the heavy slam shakes the camera
-  // more and kicks dust up where it lands; a light hit just shudders.
-  shake = Math.max(shake, kind === 'heavy' ? CONFIG.heavyShake : CONFIG.lightShake);
+  // more and kicks dust up where it lands; a light hit just shudders;
+  // the stab sits between them.
+  shake = Math.max(shake, kind === 'heavy' ? CONFIG.heavyShake
+    : kind === 'stab' ? CONFIG.stabShake : CONFIG.lightShake);
   if (kind === 'heavy') {
     effects.dust(new THREE.Vector3(boss.position.x, 0.1, boss.position.z), CONFIG.heavyDustCount);
   }
@@ -435,6 +496,7 @@ function animate() {
       bossPos: boss.position,
       onAttackHit,
       onHeal: () => {},
+      effects,
     });
     boss.update(dt, hunter, {
       damageHunter,
@@ -484,11 +546,15 @@ window.__hunter = {
   get lastHitStop() { return lastHitStop; },
   get modelsReady() { return hunter.modelLoaded && boss.modelLoaded; },
   get lastSwingPitch() { return sfx.lastSwingPitch; },
+  get lastCue() { return sfx.lastCue; },
+  get lastDodgeVolume() { return sfx.lastDodgeVolume; },
+  get dodgeCount() { return sfx.dodgeCount; },
   get particlesAlive() { return effects.aliveCount; },
   get lastSparkCount() { return effects.lastSparkCount; },
   get cameraPos() {
     return { x: camera.position.x, y: camera.position.y, z: camera.position.z };
   },
+  get cameraFov() { return camera.fov; },
   togglePause,
   hunter,
   boss,
@@ -508,11 +574,13 @@ window.__hunter = {
     setBossHp(n) { boss.hp = n; },
     setHunterHp(n) { hunter.hp = n; },
     forceBossMove(move) {
-      // 'charge' | 'sweep' | 'stomp' — jump straight to the windup.
+      // 'charge' | 'sweep' | 'stomp' | 'leap' | 'spin' — jump straight
+      // to the windup, with the move's own cue.
       if (!boss.alive) return false;
       boss.state = 'windup-' + move;
       boss.stateT = 0;
-      boss._telegraph();
+      boss._dustT = 0;
+      boss._cue(move);
       return true;
     },
     teleportHunter(x, z) {
@@ -539,10 +607,18 @@ window.__hunter = {
       hunter._beginAttack();
       return true;
     },
+    startStab() {
+      if (hunter.state !== 'idle' || !hunter.alive) return false;
+      hunter.attackKind = 'stab';
+      hunter._beginAttack();
+      return true;
+    },
     pressKey(code) {
       keys.add(code);
-      if (code === 'KeyR') hunter.tryHeal();
+      if (code === KEY_HEAL) hunter.tryHeal();
       if (code === 'ShiftLeft') hunter.tryDodge(currentMoveDir());
+      if (code === KEY_LIGHT) attackPress(KEY_LIGHT, 'light');
+      if (code === KEY_HEAVY) attackPress(KEY_HEAVY, 'heavy');
       if (code === 'KeyJ') hunter.tryLight();
       if (code === 'KeyK') hunter.tryHeavy();
     },

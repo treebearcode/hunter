@@ -21,6 +21,7 @@
   <div id="player-panel">
     <div class="bar hp"><div id="hp-fill"></div><span id="hp-text"></span></div>
     <div class="bar st"><div id="st-fill"></div></div>
+    <div id="combo-row" hidden>Combo <span id="combo-count">1</span> / 3</div>
     <div id="heal-row">Heals <span id="heal-pips">✚✚✚</span> <span class="hint">(R)</span></div>
     <div id="time-row">Time <span id="time-text">0:00</span></div>
   </div>
@@ -29,7 +30,7 @@
   <div id="lock-hint" hidden>Click to capture the mouse — move the mouse to look around · Esc to release</div>
   <div id="controls-hint">
     WASD move · Mouse: look (click to capture) · Q / E or right-drag: orbit · Wheel: zoom · Tab / middle-click: lock-on<br />
-    Click / J: light attack (3-hit combo) · Right-click / K: heavy · Shift / Space: dodge roll · R: heal · P: pause
+    Click / J / F: light attack (3-hit combo) · Right-click / K / G: heavy · F+G or LMB+RMB: thrust · Shift / Space: dodge roll · R: heal · P: pause
   </div>
 </div>
 <div id="damage-layer"></div>
@@ -47,8 +48,9 @@
       <tr><td>Mouse (click to capture)</td><td>Look around — Esc releases the mouse</td></tr>
       <tr><td>Q / E, right-drag, wheel</td><td>Orbit camera / zoom</td></tr>
       <tr><td>Tab or middle-click</td><td>Lock on to the Skeleton</td></tr>
-      <tr><td>Click or J</td><td>Light attack — 3-hit combo</td></tr>
-      <tr><td>Right-click or K</td><td>Heavy attack</td></tr>
+      <tr><td>Click, J or F</td><td>Light attack — 3-hit combo</td></tr>
+      <tr><td>Right-click, K or G</td><td>Heavy attack</td></tr>
+      <tr><td>F + G, or LMB + RMB</td><td>Thrust — long-reach stab (14 dmg)</td></tr>
       <tr><td>Shift or Space</td><td>Dodge roll (i-frames)</td></tr>
       <tr><td>R</td><td>Heal (3 per attempt)</td></tr>
       <tr><td>P or ⏸ button</td><td>Pause</td></tr>

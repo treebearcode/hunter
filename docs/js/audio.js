@@ -10,6 +10,9 @@ export class SoundFX {
     this.master = null;
     this.enabled = true;
     this.lastSwingPitch = 0; // sticky, for headless checks (set even with no audio)
+    this.lastCue = null;     // last boss-move cue played ('charge'|'sweep'|...)
+    this.lastDodgeVolume = 0; // volume of the last dodge whoosh
+    this.dodgeCount = 0;
   }
 
   // Call from a click handler. Safe to call more than once.
@@ -69,9 +72,23 @@ export class SoundFX {
   snort()  { this._tone(280, 90, 0.35, 'sawtooth', 0.55); this._tone(140, 70, 0.3, 'square', 0.35); }
   hurt()   { this._tone(160, 60, 0.25, 'sawtooth', 0.7); }       // hunter takes a hit
   heal()   { this._tone(400, 900, 0.4, 'sine', 0.5); }           // heal chime
-  dodge()  { this._tone(300, 500, 0.12, 'sine', 0.3); }
+  dodge()  {
+    // Loud on purpose now: the dodge whoosh is one of the cues that
+    // the roll actually happened, so it sits well above the swing.
+    this.dodgeCount++;
+    this.lastDodgeVolume = 0.75;
+    this._tone(300, 700, 0.18, 'sine', 0.75);
+    this._tone(180, 420, 0.18, 'triangle', 0.5);
+  }
   roar()   { this._tone(90, 220, 0.7, 'sawtooth', 0.9); }        // boss roar / enrage
-  telegraph() { this._tone(120, 120, 0.25, 'square', 0.4); }    // "big move coming" cue
+  // One distinct cue per boss move, so the tell is audible as well as
+  // visible. Charge keeps its snort; the others each get their own
+  // sound. `lastCue` records which one played, for headless checks.
+  cueCharge() { this.lastCue = 'charge'; this.snort(); }
+  cueSweep()  { this.lastCue = 'sweep'; this._tone(220, 70, 0.3, 'sawtooth', 0.55); }
+  cueStomp()  { this.lastCue = 'stomp'; this._tone(110, 45, 0.35, 'square', 0.6); }
+  cueLeap()   { this.lastCue = 'leap'; this._tone(280, 720, 0.4, 'sine', 0.6); }
+  cueSpin()   { this.lastCue = 'spin'; this._tone(420, 950, 0.3, 'square', 0.45); this._tone(600, 1200, 0.3, 'sawtooth', 0.3); }
   stomp()  { this._thud(70, 0.35, 1); }                          // ground slam
   stagger(){ this._tone(600, 200, 0.4, 'triangle', 0.6); }
   skullCrack() { this._tone(900, 150, 0.5, 'square', 0.7); }    // bone crack + snap
