@@ -13,7 +13,7 @@ Play it: https://treebearcode.github.io/hunter/ (GitHub Pages, served from `docs
   cape, longsword in hand — third-person camera, lock-on.
 - **Weapon:** Longsword only — fast, low damage, dodge-friendly.
   - Light attack (click / J / F): 3-hit combo, 8 / 8 / 12 damage, 8 stamina each.
-    Forehand, backhand, overhead chop — each with its own wind-up,
+    Forehand, backhand, two-handed slice finisher — each with its own wind-up,
     a small lunge forward, and a sword-trail ribbon that follows the
     blade. Pressing attack early buffers the next hit; a press up to
     0.3 s after a swing ends still chains instead of restarting.

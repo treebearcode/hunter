@@ -37,24 +37,29 @@ const ANIM_FILES = [
   'assets/Rig_Medium_General.glb',
 ];
 
-// Light combo, one distinct 1H swing per hit: horizontal slice,
-// diagonal slice, overhead chop. Heavy: the big 2H chop. Stab: the
-// 1H thrust, a chord move (Q+E / LMB+RMB), never part of the combo.
+// Light combo, one distinct swing per hit: horizontal slice,
+// diagonal slice, two-handed horizontal slice finisher. Heavy: the
+// big 2H chop. Stab: the 1H thrust, a chord move (F+G / LMB+RMB),
+// never part of the combo.
 // STRIKE_WINDOWS trims each clip to its strike portion, as a fraction
 // of the clip's duration: wind-up and follow-through are cut, the
-// strike plays at near-natural speed.
+// strike plays at near-natural speed. Measured from the clips' keyframe
+// motion: the KayKit slices strike FAST at the START (the blade raises
+// through the front in the first ~15% of the clip) and then hover — so
+// the windows start at 0.00, not mid-clip. The stab's thrust is
+// [0.15, 0.50]: pull-back first, full extension at ~0.30, retract after.
 const LIGHT_CLIPS = [
   'Melee_1H_Attack_Slice_Horizontal',
   'Melee_1H_Attack_Slice_Diagonal',
-  'Melee_1H_Attack_Chop',
+  'Melee_2H_Attack_Slice',
 ];
 const HEAVY_CLIP = 'Melee_2H_Attack_Chop';
 const STAB_CLIP = 'Melee_1H_Attack_Stab';
 const STRIKE_WINDOWS = {
-  'Melee_1H_Attack_Slice_Horizontal': [0.20, 0.70],
-  'Melee_1H_Attack_Slice_Diagonal': [0.25, 0.75],
-  'Melee_1H_Attack_Chop': [0.25, 0.80],
-  'Melee_1H_Attack_Stab': [0.30, 0.80],
+  'Melee_1H_Attack_Slice_Horizontal': [0.00, 0.30],
+  'Melee_1H_Attack_Slice_Diagonal': [0.00, 0.40],
+  'Melee_2H_Attack_Slice': [0.15, 0.55],
+  'Melee_1H_Attack_Stab': [0.15, 0.50],
 };
 
 export class Hunter {
@@ -305,12 +310,15 @@ export class Hunter {
     return CONFIG.lightComboTime;
   }
   // Exaggerated lean for the current swing, applied to the model (not
-  // the group — the group yaw is the facing). Horizontal = wide side
-  // arc, diagonal = cross-body, chop = overhead, stab = forward thrust.
+  // the group — the group yaw is the facing). The lean follows the
+  // swing's plane — forward, into the cut — instead of tipping the
+  // model sideways: a heavy z-lean pushed the whole blade arc off to
+  // the hunter's right, so the swing read as a side flourish while
+  // the hit landed in front.
   _attackLean() {
     if (this.attackKind === 'heavy') return { x: 0.35, z: 0.05 };
     if (this.attackKind === 'stab') return { x: 0.22, z: 0 };
-    return [{ x: 0.05, z: 0.28 }, { x: 0.18, z: 0.22 }, { x: 0.30, z: 0.05 }][this.attackIndex];
+    return [{ x: 0.12, z: 0.10 }, { x: 0.20, z: 0.10 }, { x: 0.25, z: 0.05 }][this.attackIndex];
   }
 
   // Start a light swing. Called on a click; if we are mid-swing it queues
@@ -354,16 +362,18 @@ export class Hunter {
 
   // The stab thrust: a standalone chord move, never part of the light
   // combo. Only from idle — it is a deliberate poke, not a combo link.
+  // Returns true when the stab actually starts.
   tryStab() {
-    if (!this.alive || this.state !== 'idle') return;
-    if (this.stamina < CONFIG.stabCost) return;
+    if (!this.alive || this.state !== 'idle') return false;
+    if (this.stamina < CONFIG.stabCost) return false;
     this._spendStamina(CONFIG.stabCost);
     this.attackKind = 'stab';
     this.comboGrace = 0;
     this._beginAttack();
+    return true;
   }
 
-  // Chord conversion: the second half of a light+heavy chord (Q+E /
+  // Chord conversion: the second half of a light+heavy chord (F+G /
   // LMB+RMB) lands while a light or heavy swing is still before its
   // hit — turn that swing into a stab instead of starting a new one.
   // The first press already fired a swing immediately (no input delay),

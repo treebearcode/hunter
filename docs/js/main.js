@@ -152,7 +152,12 @@ const input = { forward: false, back: false, left: false, right: false, camYaw: 
 // swing the first half already started into a stab, instead of the
 // chord waiting (the first press fires its swing immediately, so there
 // is no input delay to wait through). A chord only counts if the two
-// presses are the light+heavy pair, within 150 ms of each other.
+// presses are the light+heavy pair, within 300 ms of each other — the
+// old 150 ms window proved too tight in real play, and a mistimed
+// second press was silently dropped. If no swing is running to convert
+// (idle), a chord stabs directly instead of starting a light/heavy
+// swing first; if even that cannot start (not enough stamina), the
+// press falls through to a normal light/heavy swing as before.
 let lastAttackPress = { input: null, time: 0 };
 function attackPress(input, kind) {
   const now = performance.now();
@@ -160,10 +165,15 @@ function attackPress(input, kind) {
     [KEY_LIGHT]: KEY_HEAVY, [KEY_HEAVY]: KEY_LIGHT, LMB: 'RMB', RMB: 'LMB',
   }[input];
   if (chordPartner && lastAttackPress.input === chordPartner
-      && now - lastAttackPress.time <= 150
-      && hunter.tryConvertStab()) {
-    lastAttackPress = { input: null, time: 0 };
-    return;
+      && now - lastAttackPress.time <= 300) {
+    if (hunter.tryConvertStab()) {
+      lastAttackPress = { input: null, time: 0 };
+      return;
+    }
+    if (hunter.state === 'idle' && hunter.tryStab()) {
+      lastAttackPress = { input: null, time: 0 };
+      return;
+    }
   }
   lastAttackPress = { input, time: now };
   if (kind === 'light') hunter.tryLight();
