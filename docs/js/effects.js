@@ -1,5 +1,5 @@
 // effects.js — short-lived in-world particles: dust puffs kicked up by
-// Gorehorn's paws and the stomp, and bright impact sparks where a sword
+// the skeleton's feet and the stomp, and bright impact sparks where a sword
 // lands. One pooled THREE.Points cloud, no textures or files: each
 // particle has a position, a velocity, a lifetime and a base colour, and
 // dead particles are parked far below the floor. Nothing here is a UI

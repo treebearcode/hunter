@@ -31,7 +31,7 @@ export const CONFIG = {
   heavyCost: 15,
   heavyRange: 3.6,
 
-  // -- Gorehorn, the boss ----------------------------------------------------
+  // -- The Skeleton, the boss ------------------------------------------------
   bossMaxHp: 600,
   bossEnrageHp: 180,        // below this the boss enrages (30% of max)
   bossSpeed: 4.5,           // walk speed while closing in / wandering
@@ -40,7 +40,7 @@ export const CONFIG = {
   chargeSpeed: 18,          // m/s during a charge
   chargeWindup: 0.8,        // telegraph time before the charge
   sweepDmg: 25,
-  sweepRange: 4.0,          // shrinks to 2.8 after the horn breaks
+  sweepRange: 4.0,          // shrinks to 2.8 after the skull cracks
   sweepRangeBroken: 2.8,
   sweepWindup: 0.6,
   stompDmg: 20,
@@ -49,8 +49,8 @@ export const CONFIG = {
   shockwaveSpeed: 9,        // m/s the ring expands
   poiseMax: 100,            // accumulated damage that forces a stagger
   staggerTime: 2.5,
-  hornBreakDmg: 150,        // damage dealt to the head before a horn breaks
-  hornBreakStagger: 3.5,    // longer stagger when the horn snaps off
+  skullBreakDmg: 150,       // damage dealt to the head before the skull cracks
+  skullBreakStagger: 3.5,   // longer stagger when the skull cracks
   enrageSpeedMult: 1.25,    // attacks ~25% faster while enraged
 
   // -- Hit feel -------------------------------------------------------------

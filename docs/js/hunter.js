@@ -1,79 +1,57 @@
-// hunter.js — the player character: a low-poly humanoid with a longsword,
-// plus all of the hunter's own rules (movement, dodge roll, the 3-hit
-// light combo, the heavy swing, healing). The hunter does NOT know about
-// the boss's internals — it calls back into main.js through `ctx` when a
+// hunter.js — the player character: the KayKit Knight, with a longsword,
+// plus all of the hunter's own rules (movement, dodge, the 3-hit light
+// combo, the heavy swing, healing). The hunter does NOT know about the
+// boss's internals — it calls back into main.js through `ctx` when a
 // swing connects, and main.js decides what the swing hit.
+//
+// Models: Knight.glb (KayKit Adventurers, CC0) on the shared Rig_Medium
+// skeleton; the sword is KayKit's sword_1handed, parented to the right
+// handslot bone. Movement and attack clips come from the KayKit
+// Character Animations pack (same Rig_Medium rig, so the clips retarget
+// onto the Knight with no edits). The clips run 1.0–1.6 s against the
+// game's 0.35 s / 0.7 s swing windows, so each clip is played sped up
+// to fit its window exactly — the full wind-up → strike → follow-through
+// still plays, just fast. Hit timing is unchanged: damage still lands
+// halfway through the swing, so combat feels identical to before.
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CONFIG } from './config.js';
 import { collide } from './arena.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
+
+// Knight is 2.543 m tall in the file; at this scale he stands ~1.91 m,
+// the same height as the old procedural hunter, so movement speed,
+// camera distance and hitboxes all feel the same.
+const KNIGHT_SCALE = 0.75;
+
+// Clip file -> which clips we take from it. The animation GLBs each
+// carry a whole set on the Rig_Medium skeleton; we only play these.
+const ANIM_FILES = [
+  'assets/Rig_Medium_CombatMelee.glb',
+  'assets/Rig_Medium_MovementBasic.glb',
+  'assets/Rig_Medium_MovementAdvanced.glb',
+  'assets/Rig_Medium_General.glb',
+];
+
+// Light combo, one distinct 1H swing per hit: horizontal slice,
+// diagonal slice, overhead chop. Heavy: the big 2H chop.
+const LIGHT_CLIPS = [
+  'Melee_1H_Attack_Slice_Horizontal',
+  'Melee_1H_Attack_Slice_Diagonal',
+  'Melee_1H_Attack_Chop',
+];
+const HEAVY_CLIP = 'Melee_2H_Attack_Chop';
 
 export class Hunter {
   constructor(scene, sfx) {
     this.sfx = sfx;
     this.group = new THREE.Group(); // the whole hunter; position = feet
     this.group.position.set(0, 0, 12); // start at the south edge, facing in
+    scene.add(this.group);
 
-    // -- Body, built from boxes. Blue tunic so the hunter reads as
-    //    different from the red-brown boss at a glance. -------------------
-    const cloth = new THREE.MeshStandardMaterial({ color: 0x3a6fd8, roughness: 0.8 });
-    const skin = new THREE.MeshStandardMaterial({ color: 0xe0b08a, roughness: 0.8 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x2c2f38, roughness: 0.9 });
-    const steel = new THREE.MeshStandardMaterial({ color: 0xc8ccd4, roughness: 0.35, metalness: 0.7 });
-
-    this.torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.75, 0.36), cloth);
-    this.torso.position.y = 1.15;
-    this.head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.34), skin);
-    this.head.position.y = 1.72;
-    // A headband so the head reads from behind, where the camera sits.
-    const band = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.08, 0.36),
-      new THREE.MeshStandardMaterial({ color: 0xd8b13a }));
-    band.position.y = 1.82;
-    // Forward markers, on the hunter's front (+Z is forward): eyes and a
-    // nose on the face, and a gold buckle on the chest. The model used to
-    // be near-symmetric front-to-back, so from the camera you could not
-    // tell which way the hunter faced — these make forward obvious.
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
-    const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.02), eyeMat);
-    eyeL.position.set(-0.08, 1.75, 0.18);
-    const eyeR = eyeL.clone();
-    eyeR.position.x = 0.08;
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.04), skin);
-    nose.position.set(0, 1.68, 0.18);
-    const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.02),
-      new THREE.MeshStandardMaterial({ color: 0xd8b13a, metalness: 0.6, roughness: 0.4 }));
-    buckle.position.set(0, 0.95, 0.19);
-    this.legL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.75, 0.24), dark);
-    this.legL.position.set(-0.16, 0.38, 0);
-    this.legR = this.legL.clone();
-    this.legR.position.x = 0.16;
-    this.armL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.6, 0.2), cloth);
-    this.armL.position.set(-0.42, 1.2, 0);
-
-    // -- Right arm + longsword. The sword hangs from a pivot at the hand
-    //    so a swing is just rotating the pivot. ---------------------------
-    this.armR = new THREE.Group();
-    this.armR.position.set(0.42, 1.45, 0);
-    const armMesh = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.6, 0.2), cloth);
-    armMesh.position.y = -0.25;
-    this.armR.add(armMesh);
-    this.swordPivot = new THREE.Group();
-    this.swordPivot.position.set(0, -0.55, 0.1);
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.15, 0.015), steel);
-    blade.position.y = -0.75;
-    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.06, 0.06),
-      new THREE.MeshStandardMaterial({ color: 0xd8b13a, metalness: 0.6, roughness: 0.4 }));
-    guard.position.y = -0.18;
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22, 0.06), dark);
-    grip.position.y = -0.05;
-    this.swordPivot.add(blade, guard, grip);
-    this.armR.add(this.swordPivot);
-
-    // -- Sword trail: a ribbon swept by the blade through a swing. The
-    //    old flat arc plane is gone — the trail follows the blade's real
-    //    path, so it reads as a cut instead of a pasted-on shape. It is
+    // -- Sword trail: a ribbon swept by the blade through a swing. It is
     //    rebuilt every frame from recent blade-tip / blade-base pairs
     //    (world space, so the ribbon stays where the cut happened even
     //    as the hunter lunges). Samples older than trailMaxAge drop off.
@@ -99,13 +77,75 @@ export class Hunter {
     this.trailMesh.visible = false;
     scene.add(this.trailMesh);
 
-    for (const m of [this.torso, this.head, band, this.legL, this.legR, this.armL, armMesh, blade]) {
-      m.castShadow = true;
-    }
-    this.group.add(this.torso, this.head, band, eyeL, eyeR, nose, buckle, this.legL, this.legR, this.armL, this.armR);
-    scene.add(this.group);
+    // -- Model loading (async): the Knight, his sword, and the clips.
+    //    The game state machine runs regardless — until the model lands
+    //    the hunter is just an invisible position — so the Start button
+    //    stays disabled until `ready` resolves (main.js handles that).
+    this.modelLoaded = false;
+    this.loadError = null;
+    this.mixer = null;
+    this.clips = {};        // clip name -> AnimationClip
+    this._currentClip = null;
+    this._currentAction = null;
+    this._hitT = 0;         // seconds left of the hurt-flinch clip
+    this._materials = [];   // Knight materials, for the hurt flash
+    this._swordTip = null;  // Object3D markers on the blade, for the trail
+    this._swordBase = null;
+    this.ready = this._loadModel(scene);
 
     this.reset();
+  }
+
+  async _loadModel(scene) {
+    try {
+      const loader = new GLTFLoader();
+      const [knight, sword, ...animGltfs] = await Promise.all([
+        loader.loadAsync('assets/Knight.glb'),
+        loader.loadAsync('assets/sword_1handed.glb'),
+        ...ANIM_FILES.map((f) => loader.loadAsync(f)),
+      ]);
+      for (const g of animGltfs) {
+        for (const clip of g.animations) this.clips[clip.name] = clip;
+      }
+      const model = knight.scene;
+      model.scale.setScalar(KNIGHT_SCALE);
+      model.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          if (o.material) {
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            for (const m of mats) if (!this._materials.includes(m)) this._materials.push(m);
+          }
+        }
+      });
+      this.group.add(model);
+      this.model = model;
+
+      // The sword's blade runs along its local +Y with the grip at the
+      // origin, so it parents to the hand with no offset — but the
+      // handslot bone points the grip forward, so the blade needs a
+      // quarter-turn to stand up from the fist like a held longsword.
+      // (Bone names lose their dots in three.js: handslot.r -> handslotr.)
+      const hand = model.getObjectByName('handslotr');
+      const swordMesh = sword.scene;
+      swordMesh.rotation.x = Math.PI / 2;
+      hand.add(swordMesh);
+      this.sword = swordMesh;
+      // Trail markers on the blade, in sword-local space: tip near the
+      // point of the blade, base just above the crossguard.
+      this._swordTip = new THREE.Object3D();
+      this._swordTip.position.set(0, 1.41, 0);
+      this._swordBase = new THREE.Object3D();
+      this._swordBase.position.set(0, 0.2, 0);
+      swordMesh.add(this._swordTip, this._swordBase);
+
+      this.mixer = new THREE.AnimationMixer(model);
+      this.modelLoaded = true;
+      this._playClip('Idle_A', { loop: true, rate: 1 });
+    } catch (e) {
+      this.loadError = e;
+      console.error('Hunter model failed to load:', e);
+    }
   }
 
   reset() {
@@ -123,13 +163,15 @@ export class Hunter {
     this.iframes = 0;       // > 0 while a dodge roll is protecting us
     this.hurtInvuln = 0;    // brief protection right after taking a hit
     this.staminaDelay = 0;  // time since stamina was last spent
-    this.walkPhase = 0;     // drives the leg-swing walk animation
     this.facing = Math.PI;  // yaw the hunter is turning towards
     this.rollDir = new THREE.Vector3(0, 0, -1);
     this.moving = false;
     this.attackFacingSnapped = false; // facing locked in at swing start
+    this._hitT = 0;
     this.trailSamples = [];
     this.trailMesh.visible = false;
+    this._setFlash(false);
+    if (this.mixer) this._playClip('Idle_A', { loop: true, rate: 1 });
   }
 
   get alive() { return this.state !== 'dead'; }
@@ -137,10 +179,56 @@ export class Hunter {
   // Trail state, for headless checks.
   get trailAlive() { return this.trailSamples.length; }
   get trailVisible() { return this.trailMesh.visible; }
+  // Which clip is playing, for headless checks.
+  get currentClip() { return this._currentClip; }
+  // World position of the sword hand, for headless pose checks.
+  get handWorldPos() {
+    if (!this.model) return null;
+    const hand = this.model.getObjectByName('handr');
+    if (!hand) return null;
+    const p = new THREE.Vector3();
+    hand.getWorldPosition(p);
+    return { x: p.x, y: p.y, z: p.z };
+  }
 
   _spendStamina(n) {
     this.stamina = Math.max(0, this.stamina - n);
     this.staminaDelay = 0;
+  }
+
+  // -- Animation ------------------------------------------------------------
+  // Play a clip, fading out whatever was playing. A no-op if the clip
+  // is already the one running, so the per-frame clip selection in
+  // update() never restarts a loop.
+  _playClip(name, { loop = true, rate = 1, fade = 0.1, clamp = false } = {}) {
+    if (!this.mixer) return;
+    const clip = this.clips[name];
+    if (!clip) return;
+    if (this._currentClip === name && this._currentAction && this._currentAction.isRunning()) return;
+    const action = this.mixer.clipAction(clip);
+    action.reset();
+    action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
+    action.clampWhenFinished = clamp;
+    action.setEffectiveTimeScale(rate);
+    action.fadeIn(fade).play();
+    if (this._currentAction && this._currentAction !== action) this._currentAction.fadeOut(fade);
+    this._currentAction = action;
+    this._currentClip = name;
+  }
+
+  // Force a clip switch even if it is the one already playing — used
+  // when a combo chains into the same clip name again (it never does
+  // for the light combo, but the guard keeps the helper honest).
+  _replayClip(name, opts) {
+    this._currentClip = null;
+    this._playClip(name, opts);
+  }
+
+  // Flash the hunter red briefly after taking a hit (readability).
+  _setFlash(on) {
+    for (const m of this._materials) {
+      if (m.emissive) m.emissive.setHex(on ? 0x882222 : 0x000000);
+    }
   }
 
   // Start a light swing. Called on a click; if we are mid-swing it queues
@@ -174,6 +262,20 @@ export class Hunter {
     this.stateT = 0;
     this.hitDone = false;
     this.attackFacingSnapped = false;
+    if (this.attackKind === 'heavy') {
+      const clip = this.clips[HEAVY_CLIP];
+      this._replayClip(HEAVY_CLIP, {
+        loop: false, clamp: true, fade: 0.05,
+        rate: clip ? clip.duration / CONFIG.heavyTime : 1,
+      });
+    } else {
+      const name = LIGHT_CLIPS[this.attackIndex];
+      const clip = this.clips[name];
+      this._replayClip(name, {
+        loop: false, clamp: true, fade: 0.05,
+        rate: clip ? clip.duration / CONFIG.lightComboTime : 1,
+      });
+    }
     this._swingSound();
   }
 
@@ -200,6 +302,20 @@ export class Hunter {
     this.state = 'dodge';
     this.stateT = 0;
     this.iframes = CONFIG.dodgeTime;
+    // The dodge clips are quick steps, not rolls: pick the one that
+    // matches the roll direction relative to where we face.
+    const fwd = new THREE.Vector3(Math.sin(this.facing), 0, Math.cos(this.facing));
+    const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
+    const f = this.rollDir.dot(fwd);
+    const r = this.rollDir.dot(right);
+    const clipName = Math.abs(f) >= Math.abs(r)
+      ? (f >= 0 ? 'Dodge_Forward' : 'Dodge_Backward')
+      : (r >= 0 ? 'Dodge_Right' : 'Dodge_Left');
+    const clip = this.clips[clipName];
+    this._replayClip(clipName, {
+      loop: false, clamp: true, fade: 0.05,
+      rate: clip ? clip.duration / CONFIG.dodgeTime : 1,
+    });
     this.sfx.dodge();
   }
 
@@ -208,6 +324,11 @@ export class Hunter {
     if (this.hp >= CONFIG.hunterMaxHp) return;
     this.state = 'heal';
     this.stateT = 0;
+    const clip = this.clips['Use_Item'];
+    this._replayClip('Use_Item', {
+      loop: false, clamp: true, fade: 0.1,
+      rate: clip ? clip.duration / CONFIG.healTime : 1,
+    });
   }
 
   // The boss (via main.js) calls this when a boss move connects.
@@ -226,10 +347,17 @@ export class Hunter {
       collide(this.position, 0.5);
     }
     this.sfx.hurt();
+    // Flinch, but only if we are standing around — never yank the hunter
+    // out of a swing, a dodge or a heal that is already playing.
+    if (this.state === 'idle' && this.clips['Hit_A']) {
+      this._hitT = 0.33;
+      this._replayClip('Hit_A', { loop: false, clamp: true, fade: 0.05, rate: 2 });
+    }
     if (this.hp <= 0) {
       this.state = 'dead';
       this.stateT = 0;
-      this.group.rotation.x = -Math.PI / 2; // fall flat on our back
+      this._hitT = 0;
+      this._replayClip('Death_A', { loop: false, clamp: true, fade: 0.1, rate: 1 });
       this.sfx.defeat();
     }
     return true;
@@ -243,6 +371,8 @@ export class Hunter {
     if (this.staminaDelay > CONFIG.staminaRegenDelay && this.state !== 'dodge') {
       this.stamina = Math.min(CONFIG.staminaMax, this.stamina + CONFIG.staminaRegen * dt);
     }
+    this._hitT = Math.max(0, this._hitT - dt);
+    if (this.mixer) this.mixer.update(dt);
 
     if (!this.alive) return;
 
@@ -262,10 +392,6 @@ export class Hunter {
       //   right   R = ( cos yaw, -sin yaw)
       // W is input (0,-1), D is (+1,0), so world = mx*R + (-mz)*F, i.e.
       //   wx = mx*cos + mz*sin,  wz = -mx*sin + mz*cos.
-      // (The old code had the signs flipped — a rotation by +yaw instead
-      // of -yaw — so at yaw 0 it was correct, but as soon as the camera
-      // orbited, W drifted sideways, up to 90 degrees off at yaw 45 deg
-      // and fully backwards at yaw 90 deg.)
       const sin = Math.sin(input.camYaw), cos = Math.cos(input.camYaw);
       const wx = move.x * cos + move.z * sin;
       const wz = -move.x * sin + move.z * cos;
@@ -298,13 +424,9 @@ export class Hunter {
     // -- State machine ------------------------------------------------------
     if (this.state === 'dodge') {
       this.position.addScaledVector(this.rollDir, CONFIG.dodgeSpeed * dt);
-      // Tuck into a roll: the whole body spins once around its local X.
-      const p = this.stateT / CONFIG.dodgeTime;
-      this.group.rotation.x = p * Math.PI * 2;
       if (this.stateT >= CONFIG.dodgeTime) {
         this.state = 'idle';
         this.stateT = 0;
-        this.group.rotation.x = 0;
       }
     } else if (this.state === 'attack') {
       const dur = this.attackKind === 'light' ? CONFIG.lightComboTime : CONFIG.heavyTime;
@@ -338,6 +460,12 @@ export class Hunter {
           this.stateT = 0;
           this.hitDone = false;
           this.attackFacingSnapped = false;
+          const name = LIGHT_CLIPS[this.attackIndex];
+          const clip = this.clips[name];
+          this._replayClip(name, {
+            loop: false, clamp: true, fade: 0.05,
+            rate: clip ? clip.duration / CONFIG.lightComboTime : 1,
+          });
           this._swingSound();
         } else {
           this.comboQueued = false;
@@ -364,105 +492,50 @@ export class Hunter {
 
     collide(this.position, 0.5);
 
-    // -- Animation: walk cycle, sword pose, sword trail. --------------------
-    if (this.moving && this.state === 'idle') {
-      this.walkPhase += dt * 11;
-      const s = Math.sin(this.walkPhase);
-      this.legL.rotation.x = s * 0.6;
-      this.legR.rotation.x = -s * 0.6;
-      this.armL.rotation.x = -s * 0.4;
-    } else if (this.state !== 'attack') {
-      this.legL.rotation.x *= 0.8;
-      this.legR.rotation.x *= 0.8;
-      this.armL.rotation.x *= 0.8;
+    // -- Animation: which clip should be playing. Attacks, dodges, heals
+    //    and death set their own clip at the moment they start; idle and
+    //    run are picked here every frame, and the hurt flinch overrides
+    //    them briefly. _playClip is a no-op when the clip is already
+    //    running, so this never restarts a loop.
+    if (this.state === 'idle') {
+      if (this._hitT > 0) {
+        this._playClip('Hit_A', { loop: false, clamp: true, fade: 0.05, rate: 2 });
+      } else if (this.moving) {
+        this._playClip('Running_A', { loop: true, rate: 1, fade: 0.15 });
+      } else {
+        this._playClip('Idle_A', { loop: true, rate: 1, fade: 0.15 });
+      }
+    } else if (this.state === 'attack') {
+      // Self-healing guard: if the model finished loading mid-swing
+      // (or a debug hook started the swing before load), make sure the
+      // right swing clip is playing. _playClip no-ops when it already is.
+      const name = this.attackKind === 'heavy' ? HEAVY_CLIP : LIGHT_CLIPS[this.attackIndex];
+      const clip = this.clips[name];
+      const dur = this.attackKind === 'heavy' ? CONFIG.heavyTime : CONFIG.lightComboTime;
+      this._playClip(name, {
+        loop: false, clamp: true, fade: 0.05,
+        rate: clip ? clip.duration / dur : 1,
+      });
     }
 
-    if (this.state === 'attack') {
-      // Each swing has its own pose, driven by keyframes: a wind-up
-      // (torso twisted away, sword cocked back), the strike (torso
-      // driving through, sword across/down), and a follow-through.
-      // Light 1 forehand, light 2 backhand, light 3 + heavy overhead.
-      const dur = this.attackKind === 'light' ? CONFIG.lightComboTime : CONFIG.heavyTime;
-      const p = Math.min(1, this.stateT / dur);
-      const pose = this._attackPose(p);
-      this.armR.rotation.x = pose.armX;
-      this.armR.rotation.z = pose.armZ;
-      this.swordPivot.rotation.x = pose.swordX;
-      this.torso.rotation.y = pose.torsoY;
-      this.torso.rotation.x = pose.torsoX;
-      this.legL.rotation.x = pose.legL;
-      this.legR.rotation.x = pose.legR;
-      this.armL.rotation.x = pose.armLX;
-      this._sampleTrail(dt);
-    } else if (this.state === 'heal') {
-      this.armR.rotation.x = -2.2; // raise the sword hand while drinking
-      this.armR.rotation.z = 0;
-      this._decayPose();
-    } else {
-      this._decayPose();
-    }
+    // Sword trail, sampled from the blade markers while swinging.
+    if (this.state === 'attack') this._sampleTrail(dt);
     this._rebuildTrail(dt);
 
-    // Flash the hunter white briefly after taking a hit (readability).
+    // Flash the hunter red briefly after taking a hit (readability).
     const flash = this.hurtInvuln > 0.55;
-    this.torso.material.emissive.setHex(flash ? 0x882222 : 0x000000);
-  }
-
-  // -- Attack poses ---------------------------------------------------------
-  // Keyframes per swing: [time, pose]. armX/armZ = sword arm, swordX =
-  // blade pivot, torsoY/X = torso twist/lean, legL/R = stance, armLX =
-  // left arm (reaches up to the grip on overhead swings).
-  _attackPose(p) {
-    const keys = this.attackKind === 'heavy' ? [
-      [0.00, { armX: -0.2, armZ: 0.2, swordX: 0.0, torsoY: 0.00, torsoX: 0.00, legL: 0.00, legR: 0.00, armLX: 0.0 }],
-      [0.30, { armX: -2.7, armZ: 0.2, swordX: -1.5, torsoY: -0.30, torsoX: -0.35, legL: -0.50, legR: 0.55, armLX: -1.8 }],
-      [0.55, { armX: 0.9, armZ: 0.0, swordX: 0.6, torsoY: 0.15, torsoX: 0.55, legL: 0.55, legR: -0.45, armLX: 0.6 }],
-      [1.00, { armX: 0.5, armZ: 0.0, swordX: 0.3, torsoY: 0.00, torsoX: 0.30, legL: 0.30, legR: -0.25, armLX: 0.3 }],
-    ] : this.attackIndex === 2 ? [
-      [0.00, { armX: -0.2, armZ: 0.2, swordX: 0.0, torsoY: 0.00, torsoX: 0.00, legL: 0.00, legR: 0.00, armLX: 0.0 }],
-      [0.30, { armX: -2.4, armZ: 0.3, swordX: -1.2, torsoY: -0.15, torsoX: -0.25, legL: -0.40, legR: 0.40, armLX: -1.2 }],
-      [0.55, { armX: 0.7, armZ: 0.0, swordX: 0.5, torsoY: 0.10, torsoX: 0.40, legL: 0.45, legR: -0.35, armLX: 0.4 }],
-      [1.00, { armX: 0.3, armZ: 0.1, swordX: 0.2, torsoY: 0.00, torsoX: 0.20, legL: 0.20, legR: -0.20, armLX: 0.2 }],
-    ] : this.attackIndex === 1 ? [
-      // Backhand: mirror of the forehand, across the other way.
-      [0.00, { armX: -0.2, armZ: -0.2, swordX: 0.0, torsoY: 0.00, torsoX: 0.00, legL: 0.00, legR: 0.00, armLX: 0.0 }],
-      [0.30, { armX: -0.5, armZ: -1.5, swordX: -0.6, torsoY: 0.55, torsoX: -0.08, legL: 0.35, legR: -0.30, armLX: -0.3 }],
-      [0.55, { armX: -0.4, armZ: 1.5, swordX: 0.4, torsoY: -0.55, torsoX: 0.12, legL: -0.30, legR: 0.35, armLX: 0.3 }],
-      [1.00, { armX: -0.3, armZ: 0.7, swordX: 0.2, torsoY: -0.25, torsoX: 0.05, legL: -0.15, legR: 0.15, armLX: 0.1 }],
-    ] : [
-      // Forehand: cocked up-right, driven across to the left.
-      [0.00, { armX: -0.2, armZ: 0.2, swordX: 0.0, torsoY: 0.00, torsoX: 0.00, legL: 0.00, legR: 0.00, armLX: 0.0 }],
-      [0.30, { armX: -0.5, armZ: 1.5, swordX: -0.6, torsoY: -0.55, torsoX: -0.08, legL: -0.30, legR: 0.35, armLX: 0.3 }],
-      [0.55, { armX: -0.4, armZ: -1.5, swordX: 0.4, torsoY: 0.55, torsoX: 0.12, legL: 0.35, legR: -0.30, armLX: -0.3 }],
-      [1.00, { armX: -0.3, armZ: -0.7, swordX: 0.2, torsoY: 0.25, torsoX: 0.05, legL: 0.15, legR: -0.15, armLX: -0.1 }],
-    ];
-    // Find the surrounding keyframes and lerp between them.
-    let i = 0;
-    while (i < keys.length - 2 && p > keys[i + 1][0]) i++;
-    const [t0, a] = keys[i];
-    const [t1, b] = keys[i + 1];
-    const f = t1 > t0 ? Math.max(0, Math.min(1, (p - t0) / (t1 - t0))) : 1;
-    const out = {};
-    for (const k of Object.keys(a)) out[k] = a[k] + (b[k] - a[k]) * f;
-    return out;
-  }
-
-  // Ease the attack pose back to neutral once a swing / heal ends.
-  _decayPose() {
-    this.armR.rotation.z *= 0.8;
-    this.armR.rotation.x *= 0.8;
-    this.swordPivot.rotation.x *= 0.8;
-    this.torso.rotation.y *= 0.8;
-    this.torso.rotation.x *= 0.8;
-    this.armL.rotation.x *= 0.8;
+    this._setFlash(flash);
   }
 
   // -- Sword trail ----------------------------------------------------------
   // Record one blade-tip / blade-base pair per frame while swinging.
   _sampleTrail(dt) {
+    if (!this._swordTip || !this._swordBase) return;
     this.group.updateMatrixWorld(true);
-    const tip = this.swordPivot.localToWorld(new THREE.Vector3(0, -1.35, 0));
-    const base = this.swordPivot.localToWorld(new THREE.Vector3(0, -0.15, 0));
+    const tip = new THREE.Vector3();
+    const base = new THREE.Vector3();
+    this._swordTip.getWorldPosition(tip);
+    this._swordBase.getWorldPosition(base);
     this.trailSamples.push({ tip, base, age: 0 });
     if (this.trailSamples.length > this._trailMax) this.trailSamples.shift();
     for (const s of this.trailSamples) s.age += dt;

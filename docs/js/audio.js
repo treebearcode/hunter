@@ -65,7 +65,7 @@ export class SoundFX {
   // Sword connects: a low thud under a short metallic bite, louder and
   // much heavier than the swing whoosh so a landed hit reads by ear.
   hit()    { this._thud(160, 0.14, 1.0); this._tone(320, 140, 0.08, 'square', 0.55); }
-  // Gorehorn snorts before a charge: a rough descending growl.
+  // The skeleton snorts before a charge: a rough descending growl.
   snort()  { this._tone(280, 90, 0.35, 'sawtooth', 0.55); this._tone(140, 70, 0.3, 'square', 0.35); }
   hurt()   { this._tone(160, 60, 0.25, 'sawtooth', 0.7); }       // hunter takes a hit
   heal()   { this._tone(400, 900, 0.4, 'sine', 0.5); }           // heal chime
@@ -74,7 +74,7 @@ export class SoundFX {
   telegraph() { this._tone(120, 120, 0.25, 'square', 0.4); }    // "big move coming" cue
   stomp()  { this._thud(70, 0.35, 1); }                          // ground slam
   stagger(){ this._tone(600, 200, 0.4, 'triangle', 0.6); }
-  hornBreak() { this._tone(900, 150, 0.5, 'square', 0.7); }     // crack + snap
+  skullCrack() { this._tone(900, 150, 0.5, 'square', 0.7); }    // bone crack + snap
   victory(){ this._tone(440, 440, 0.15, 'sine', 0.5); this._tone(660, 660, 0.3, 'sine', 0.5); }
   defeat() { this._tone(220, 110, 0.6, 'sawtooth', 0.5); }
   click()  { this._tone(700, 700, 0.05, 'sine', 0.4); }

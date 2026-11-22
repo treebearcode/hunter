@@ -92,7 +92,7 @@ export class UI {
     this.hud.hidden = true;
     const end = this.el('end-screen');
     end.hidden = false;
-    this.el('end-title').textContent = won ? 'GOREHORN SLAIN' : 'YOU DIED';
+    this.el('end-title').textContent = won ? 'SKELETON SHATTERED' : 'YOU DIED';
     this.el('end-title').className = won ? 'win' : 'lose';
     this.el('end-stats').textContent = won
       ? `Clear time: ${fmtTime(elapsedSec)}`

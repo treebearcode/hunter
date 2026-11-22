@@ -34,6 +34,21 @@ const effects = new Effects(scene);
 const hunter = new Hunter(scene, sfx);
 const boss = new Boss(scene, sfx);
 
+// The models load asynchronously; the fight cannot start until the
+// Knight and the Skeleton are both in the scene, so the Start button
+// stays disabled (showing LOADING…) until both are ready.
+const startButton = document.getElementById('start-button');
+startButton.disabled = true;
+startButton.textContent = 'LOADING…';
+Promise.allSettled([hunter.ready, boss.ready]).then(() => {
+  if (hunter.loadError || boss.loadError) {
+    startButton.textContent = 'FAILED TO LOAD — RELOAD THE PAGE';
+    return;
+  }
+  startButton.disabled = false;
+  startButton.textContent = 'ENTER THE ARENA';
+});
+
 // -- Game state ---------------------------------------------------------------
 // phase: 'menu' | 'playing' | 'won' | 'lost'. The overlays in index.html
 // are the only thing that changes phase — the loop always runs, so the
@@ -291,7 +306,7 @@ function togglePause() {
 
 // -- Combat glue --------------------------------------------------------------
 // The hunter reports a swing; this decides whether it hit the boss, and
-// whether the hit was on the head (horn damage) or the body.
+// whether the hit was on the head (skull damage) or the body.
 function onAttackHit(dmg, range, kind) {
   if (!boss.alive) return;
   const toBoss = new THREE.Vector3().subVectors(boss.position, hunter.position);
@@ -302,7 +317,7 @@ function onAttackHit(dmg, range, kind) {
   const facing = new THREE.Vector3(Math.sin(hunter.group.rotation.y), 0, Math.cos(hunter.group.rotation.y));
   if (toBoss.normalize().dot(facing) < 0.1) return;
   // Head hit? Compare the hunter's position to the boss's head: if the
-  // hunter is standing near the head end of the boss, the swing hits horn.
+  // hunter is standing near the head end of the boss, the swing hits the skull.
   const headDist = hunter.position.distanceTo(boss.headPos);
   const isHead = headDist < 3.0;
   const result = boss.takeDamage(dmg, isHead);
@@ -323,8 +338,9 @@ function onAttackHit(dmg, range, kind) {
     effects.dust(new THREE.Vector3(boss.position.x, 0.1, boss.position.z), CONFIG.heavyDustCount);
   }
   ui.damageNumber(boss.headPos, camera, String(dmg), isHead ? 'head' : 'hit');
-  if (result.hornBroke) {
-    ui.damageNumber(boss.headPos, camera, 'HORN BREAK!', 'break');
+  if (result.skullBroke) {
+    ui.damageNumber(boss.headPos, camera, 'SKULL CRACK!', 'break');
+    effects.sparks(boss.headPos, 20); // bone shards bursting from the skull
   }
   if (result.killed) {
     phase = 'won';
@@ -466,6 +482,7 @@ window.__hunter = {
   get pointerLocked() { return pointerLocked; },
   get paused() { return paused; },
   get lastHitStop() { return lastHitStop; },
+  get modelsReady() { return hunter.modelLoaded && boss.modelLoaded; },
   get lastSwingPitch() { return sfx.lastSwingPitch; },
   get particlesAlive() { return effects.aliveCount; },
   get lastSparkCount() { return effects.lastSparkCount; },
