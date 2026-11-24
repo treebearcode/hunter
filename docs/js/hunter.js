@@ -48,6 +48,116 @@ const ANIM_FILES = [
 // through the front in the first ~15% of the clip) and then hover — so
 // the windows start at 0.00, not mid-clip. The stab's thrust is
 // [0.15, 0.50]: pull-back first, full extension at ~0.30, retract after.
+//
+// WIDEN bakes a torso/shoulder yaw sweep into each strike clip so the
+// blade sweeps the WHOLE frontal width, not just the sword-arm side:
+// the KayKit swings never take the blade past the hunter's centre line
+// (measured tip lateral span: light1 -1.45..-0.18, light2 -1.45..-0.73,
+// light3 -0.59..-0.17, heavy -1.17..-0.49, stab -1.28..-0.98 — all on
+// the right), while the hitbox is the full width in front. Each number
+// is a peak yaw in radians for that bone's rotation track, 0 at both
+// ends of the clip and peaking in the middle (the hit moment), so the
+// clip still starts/ends at the rest pose. The twist distributes across
+// root, spine, chest and sword shoulder — the model itself never
+// rotates, so the facing and the hitbox never move, only the blade's
+// arc widens. The root yaw is the whole-body turn into the cut (hips
+// and feet turn with it, as in a real slash); two-handed swings get
+// less shoulder yaw so both hands stay on the grip.
+const WIDEN = {
+  // light1: the horizontal slice's blade is high and close to the body
+  // axis at the hit moment, so a big whole-body (root) yaw swings it
+  // around the axis instead of across the front and kills its forward
+  // reach — keep the root small, lean on spine + shoulder instead.
+  'Melee_1H_Attack_Slice_Horizontal': { root: 0.10, spine: 0.45, chest: 0.20, upperarmr: 0.50 },
+  'Melee_1H_Attack_Slice_Diagonal': { root: 0.55, spine: 0.40, chest: 0.40, upperarmr: 0.60 },
+  'Melee_2H_Attack_Slice': { root: 0.60, spine: 0.40, chest: 0.40, upperarmr: 0.30 },
+  // Heavy: the chop already descends leftwards on its own, so less yaw
+  // lands it down the middle instead of past it.
+  'Melee_2H_Attack_Chop': { root: 0.40, spine: 0.30, chest: 0.30, upperarmr: 0.25 },
+  // Stab: the thrust is a line, not an arc — centre it with the root
+  // turn (a true vertical axis) and keep the tilted torso/shoulder
+  // yaw minimal, or the blade drops and stabs low instead of at the
+  // boss's chest.
+  'Melee_1H_Attack_Stab': { root: 0.80, spine: 0.10, chest: 0.05, upperarmr: 0.10 },
+};
+
+// Bake the yaw sweep from WIDEN into a clip: the root, spine, chest
+// and sword-shoulder rotation tracks are rebuilt on a 30fps grid, each
+// keyframe premultiplied by a yaw about the parent's vertical axis, so
+// the whole upper body turns as one unit and carries the blade across
+// the front. The grid rebuild matters: the KayKit clips leave unmoving
+// bones out entirely, or with a single keyframe at the clip start —
+// editing those in place would be a no-op (the sweep is 0 at both
+// ends), so the base pose is sampled (slerp between the track's own
+// keyframes) and the sweep is written at every grid point. A track
+// missing from the strike subclip is sampled from the SOURCE clip at
+// the matching time — the subclip drops tracks with no keyframe inside
+// its window, but the bone still moves there by interpolation, so the
+// bone's rest pose would be the wrong base. Returns the clip.
+function _widenClip(clip, amps, model, source, windowFrac) {
+  const yaw = new THREE.Quaternion();
+  const Y = new THREE.Vector3(0, 1, 0);
+  const dur = clip.duration;
+  const fps = 30;
+  const n = Math.max(2, Math.round(dur * fps) + 1);
+  const [wa, wb] = windowFrac || [0, 1];
+  const srcDur = source ? source.duration : dur;
+  // Quaternion at time t of a track (slerp between its keyframes), or
+  // null when the track has no usable keyframes.
+  const sampleTrack = (track, t) => {
+    const times = track.times, vals = track.values;
+    if (!times.length) return null;
+    let k = 0;
+    while (k < times.length - 2 && times[k + 1] <= t) k++;
+    const a = new THREE.Quaternion().set(vals[k * 4], vals[k * 4 + 1], vals[k * 4 + 2], vals[k * 4 + 3]);
+    const t1 = times[k + 1];
+    if (t1 === undefined || t1 <= times[k]) return a;
+    const b = new THREE.Quaternion().set(vals[(k + 1) * 4], vals[(k + 1) * 4 + 1], vals[(k + 1) * 4 + 2], vals[(k + 1) * 4 + 3]);
+    return new THREE.Quaternion().slerpQuaternions(a, b, (t - times[k]) / (t1 - times[k]));
+  };
+  for (const [bone, amp] of Object.entries(amps)) {
+    if (!amp) continue;
+    let track = clip.tracks.find((t) => t.name === bone + '.quaternion');
+    const base = [];
+    for (let i = 0; i < n; i++) {
+      const t = (i === n - 1) ? dur : i / fps;
+      let q = null;
+      if (track) q = sampleTrack(track, t);
+      if (!q && source) {
+        // Missing from the subclip: sample the source clip at the
+        // matching time (subclip time t is fraction t/dur of the
+        // window [wa, wb] of the source clip).
+        const srcTrack = source.tracks.find((s) => s.name === bone + '.quaternion');
+        if (srcTrack) q = sampleTrack(srcTrack, (wa + (wb - wa) * (t / dur)) * srcDur);
+      }
+      if (!q) {
+        const boneObj = model ? model.getObjectByName(bone) : null;
+        q = boneObj ? boneObj.quaternion.clone() : new THREE.Quaternion();
+      }
+      base.push(q);
+    }
+    if (!track) {
+      track = new THREE.QuaternionKeyframeTrack(bone + '.quaternion', new Float32Array(n), new Float32Array(n * 4));
+      clip.tracks.push(track);
+    } else {
+      track.times = new Float32Array(n);
+      track.values = new Float32Array(n * 4);
+    }
+    for (let i = 0; i < n; i++) {
+      const t = (i === n - 1) ? dur : i / fps;
+      const phi = amp * Math.sin(Math.PI * (t / dur));
+      const q = base[i];
+      if (Math.abs(phi) > 1e-6) {
+        yaw.setFromAxisAngle(Y, phi);
+        q.premultiply(yaw);
+      }
+      track.times[i] = t;
+      track.values[i * 4] = q.x; track.values[i * 4 + 1] = q.y;
+      track.values[i * 4 + 2] = q.z; track.values[i * 4 + 3] = q.w;
+    }
+  }
+  return clip;
+}
 const LIGHT_CLIPS = [
   'Melee_1H_Attack_Slice_Horizontal',
   'Melee_1H_Attack_Slice_Diagonal',
@@ -158,6 +268,18 @@ export class Hunter {
       });
       this.group.add(model);
       this.model = model;
+      // Widen the strike portions (and the heavy's full clip, cloned so
+      // the source clip is untouched) so the blade sweeps the whole
+      // frontal width instead of staying on the sword-arm side. Needs
+      // this.model and the source clips: tracks missing from a strike
+      // subclip are sampled from the source clip at the matching time.
+      for (const name of Object.keys(STRIKE_WINDOWS)) {
+        const strike = this.clips[name + '_strike'];
+        if (strike && WIDEN[name]) _widenClip(strike, WIDEN[name], this.model, this.clips[name], STRIKE_WINDOWS[name]);
+      }
+      if (this.clips[HEAVY_CLIP] && WIDEN[HEAVY_CLIP]) {
+        this.clips[HEAVY_CLIP] = _widenClip(this.clips[HEAVY_CLIP].clone(), WIDEN[HEAVY_CLIP], this.model, this.clips[HEAVY_CLIP], [0, 1]);
+      }
 
       // The sword's blade runs along its local +Y with the grip at the
       // origin, so it parents to the hand with no offset — but the
@@ -317,7 +439,10 @@ export class Hunter {
   // the hit landed in front.
   _attackLean() {
     if (this.attackKind === 'heavy') return { x: 0.35, z: 0.05 };
-    if (this.attackKind === 'stab') return { x: 0.22, z: 0 };
+    // Stab: a shallower lean than the swings — the widened thrust reaches
+    // much further forward, so the old 0.22 pitch dropped the tip low
+    // (y 0.64); 0.12 keeps the thrust level at chest height.
+    if (this.attackKind === 'stab') return { x: 0.12, z: 0 };
     return [{ x: 0.12, z: 0.10 }, { x: 0.20, z: 0.10 }, { x: 0.25, z: 0.05 }][this.attackIndex];
   }
 
