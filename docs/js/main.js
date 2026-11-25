@@ -196,7 +196,10 @@ function attackPress(input, kind) {
 }
 
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Tab') { e.preventDefault(); toggleLock(); return; }
+  // Tab is lock-on, but only while a fight is running — in the menu it
+  // must keep its normal job (moving keyboard focus, e.g. to the boss
+  // select buttons). toggleLock() itself also refuses outside play.
+  if (e.code === 'Tab' && phase === 'playing') { e.preventDefault(); toggleLock(); return; }
   if (e.code === 'KeyP') { togglePause(); return; }
   if (phase !== 'playing' || paused) return;
   // Auto-repeat must never re-trigger an attack or a chord: holding F
@@ -424,9 +427,11 @@ function onAttackHit(dmg, range, kind) {
     effects.dust(new THREE.Vector3(boss.position.x, 0.1, boss.position.z), CONFIG.heavyDustCount);
   }
   ui.damageNumber(boss.headPos, camera, String(dmg), isHead ? 'head' : 'hit');
-  if (result.skullBroke) {
-    ui.damageNumber(boss.headPos, camera, 'SKULL CRACK!', 'break');
-    effects.sparks(boss.headPos, 20); // bone shards bursting from the skull
+  // The break banner reads the label off the boss (SKULL CRACK! for
+  // the Skeleton, BEAR HAT BREAK! for the Barbarian).
+  if (result.broke) {
+    ui.damageNumber(boss.headPos, camera, result.breakLabel, 'break');
+    effects.sparks(boss.headPos, 20); // shards bursting from the break
   }
   if (result.killed) {
     phase = 'won';

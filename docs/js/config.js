@@ -73,8 +73,10 @@ export const CONFIG = {
   shockwaveSpeed: 9,        // m/s the ring expands
   poiseMax: 100,            // accumulated damage that forces a stagger
   staggerTime: 2.5,
-  skullBreakDmg: 150,       // damage dealt to the head before the skull cracks
-  skullBreakStagger: 3.5,   // longer stagger when the skull cracks
+  skullBreakDmg: 150,       // head damage before the break triggers —
+                            // the skull for the Skeleton, the bear hat
+                            // for the Barbarian (same threshold both)
+  skullBreakStagger: 3.5,   // longer stagger when the break triggers
   enrageSpeedMult: 1.25,    // attacks ~25% faster while enraged
 
   // -- Hit feel -------------------------------------------------------------

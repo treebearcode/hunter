@@ -23,6 +23,49 @@ export class UI {
     this.flashEl = this.el('damage-flash');
     this.enrageEl = this.el('enrage-banner');
     this._enrageShown = false;
+    this._bossName = 'THE BARBARIAN'; // cached from boss.displayName each frame
+    this._bossWinTitle = 'BARBARIAN FELLED';
+    this._bossNameEl = this.el('boss-name');
+
+    // Boss select (start screen): two buttons, plain <button>s so they
+    // work with mouse and keyboard alike. The choice is saved in
+    // localStorage and read back by the Boss when it loads; the Boss
+    // itself does the model swap, via the hunter:boss-select event, so
+    // the menu never has to know how a boss is built.
+    this._bossButtons = {
+      barbarian: this.el('boss-select-barbarian'),
+      skeleton: this.el('boss-select-skeleton'),
+    };
+    this._bossDescs = {
+      barbarian: this.el('boss-desc-barbarian'),
+      skeleton: this.el('boss-desc-skeleton'),
+    };
+    const savedBoss = (window.localStorage && localStorage.getItem('hunter.boss')) || 'barbarian';
+    this._applyBossChoice(savedBoss === 'skeleton' ? 'skeleton' : 'barbarian');
+    for (const [kind, btn] of Object.entries(this._bossButtons)) {
+      if (!btn) continue;
+      btn.addEventListener('click', () => this._selectBoss(kind));
+    }
+  }
+
+  // Show the saved/chosen boss as selected in the menu. The actual
+  // model swap is the Boss's job (it listens for the event below).
+  _applyBossChoice(kind) {
+    for (const [k, btn] of Object.entries(this._bossButtons)) {
+      if (!btn) continue;
+      const on = k === kind;
+      btn.classList.toggle('selected', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    for (const [k, desc] of Object.entries(this._bossDescs)) {
+      if (desc) desc.hidden = k !== kind;
+    }
+  }
+
+  _selectBoss(kind) {
+    if (window.localStorage) localStorage.setItem('hunter.boss', kind);
+    this._applyBossChoice(kind);
+    window.dispatchEvent(new CustomEvent('hunter:boss-select', { detail: { kind } }));
   }
 
   update(hunter, boss, elapsedSec, locked) {
@@ -40,10 +83,18 @@ export class UI {
     this.healPips.textContent = '✚'.repeat(hunter.heals) + '○'.repeat(CONFIG.healCount - hunter.heals);
     this.bossFill.style.width = Math.max(0, boss.hp / CONFIG.bossMaxHp * 100) + '%';
     this.bossWrap.classList.toggle('enraged', boss.enraged);
+    // The boss name / win title follow whichever boss is selected —
+    // the HUD never hard-codes a boss.
+    if (boss.displayName && boss.displayName !== this._bossName) {
+      this._bossName = boss.displayName;
+      if (this._bossNameEl) this._bossNameEl.textContent = boss.displayName;
+    }
+    if (boss.winTitle) this._bossWinTitle = boss.winTitle;
     this.lockEl.hidden = !locked;
     this.timeEl.textContent = fmtTime(elapsedSec);
     if (boss.enraged && !this._enrageShown) {
       this._enrageShown = true;
+      this.enrageEl.textContent = `${this._bossName} IS ENRAGED`;
       this.enrageEl.hidden = false;
       setTimeout(() => { this.enrageEl.hidden = true; }, 2000);
     }
@@ -101,7 +152,7 @@ export class UI {
     this.hud.hidden = true;
     const end = this.el('end-screen');
     end.hidden = false;
-    this.el('end-title').textContent = won ? 'SKELETON SHATTERED' : 'YOU DIED';
+    this.el('end-title').textContent = won ? this._bossWinTitle : 'YOU DIED';
     this.el('end-title').className = won ? 'win' : 'lose';
     this.el('end-stats').textContent = won
       ? `Clear time: ${fmtTime(elapsedSec)}`

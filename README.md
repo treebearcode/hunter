@@ -1,7 +1,7 @@
 # Hunter
 
 A Souls-like / Monster Hunter-like 3D third-person bossing game, built with
-Three.js. One arena, one hunter, one boss — the prototype answers a single
+Three.js. One arena, one hunter, two bosses — the prototype answers a single
 question: does the 1v1 fight feel good?
 
 Play it: https://treebearcode.github.io/hunter/ (GitHub Pages, served from `docs/`)
@@ -33,26 +33,33 @@ Play it: https://treebearcode.github.io/hunter/ (GitHub Pages, served from `docs
   - Heal (R): 3 per attempt, +40 HP over a 1.2 s channel, interrupted by a hit.
   - Stamina 100, regenerates ~25/s after 0.8 s without spending.
   - Hit-stop fires only on a landed hit — a whiff never freezes the game.
-- **Boss:** the Skeleton (Quaternius Ultimate Monsters, CC0, see Models
-  below) — a 4 m undead brute, 600 HP.
-  - Charge (telegraphed, hits the wall → stagger), bone-club sweep
-    (25 dmg), stomp shockwave (20 dmg, roll through the ring), leap
-    slam (22 dmg — crouches, jumps an arc onto the hunter, lands with
-    a shockwave) and spin sweep (20 dmg — a full 360° turn with the
-    club out, hits all around). Sweep is a low twist, stomp a high
-    rear-up, each with its own sound cue and dust during the windup.
+- **Bosses (pick on the start screen, saved between visits):** the
+  Barbarian (KayKit Adventurers, CC0) is the main boss — a 4 m rival
+  bruiser with a two-handed axe, 600 HP. The Skeleton (Quaternius
+  Ultimate Monsters, CC0) stays as the second option — a 4 m undead
+  brute, same 600 HP, same five moves.
+  - Charge (telegraphed, hits the wall → stagger), sweep (25 dmg),
+    stomp shockwave (20 dmg, roll through the ring), leap slam
+    (22 dmg — crouches, jumps an arc onto the hunter, lands with a
+    shockwave) and spin sweep (20 dmg — a full 360° turn, hits all
+    around). Sweep is a low twist, stomp a high rear-up, each with its
+    own sound cue and dust during the windup. The Barbarian's moves
+    are real KayKit clips (2H Slice / 2H Chop / 2H Spinning / run /
+    jump); the Skeleton's sweep, stomp, leap and spin all share its
+    single Attack take, as before.
   - The boss body is solid: it pushes the hunter out to 2.0 m, no
     damage. Contact damage exists only during a charge. Light range
     is 3.8 m, so the hunter can hit from a step further out.
-  - A landed hit flashes the skeleton WHITE, briefly — the only flash
+  - A landed hit flashes the boss WHITE, briefly — the only flash
     in the game. Tells are pose, sound and dust only: no red glow on
     windups, ever. Enrage keeps a slow red pulse, dimmed further.
   - Poise: enough damage staggers it for ~2.5 s. Head hits damage the
-    skull; after 150 head damage the skull cracks (longer stagger,
-    shorter sweep) — the old horn-break mechanic, re-skinned: the
-    skeleton has no horns, so the break reads through the "SKULL
-    CRACK!" banner, the crack sound, bone sparks, the stagger and the
-    shorter sweep.
+    break target; after 150 head damage it breaks (longer stagger,
+    shorter sweep) — the old horn-break mechanic, re-skinned per boss:
+    the Skeleton's skull cracks ("SKULL CRACK!"), the Barbarian's
+    bearskin hat breaks ("BEAR HAT BREAK!"). Neither model loses a
+    visible piece, so the break reads through the banner, the crack
+    sound, sparks, the stagger and the shorter sweep.
   - Enrages under 30% HP: attacks ~25% faster, red pulse.
 - **Win / lose:** boss HP to 0 → victory screen with clear time;
   hunter HP to 0 → defeat screen. Retry restarts instantly.
@@ -96,10 +103,12 @@ then open http://localhost:8000.
 - `docs/js/main.js` — boot, render loop, camera, input, win/lose state
 - `docs/js/config.js` — every tuning number, in one place
 - `docs/js/hunter.js` — hunter mesh, movement, dodge, attacks, heal
-- `docs/js/boss.js` — Skeleton model, AI state machine, moves, stagger, skull crack
+- `docs/js/boss.js` — two bosses (Barbarian main, Skeleton second),
+  shared AI state machine, moves, stagger, break (skull / bear hat)
 - `docs/assets/` — the models: Knight.glb + sword_1handed.glb (KayKit),
-  Skeleton.glb (Quaternius, converted from FBX), and the four
-  Rig_Medium animation packs (KayKit Character Animations)
+  Barbarian.glb + axe_2handed.glb (KayKit), Skeleton.glb (Quaternius,
+  converted from FBX), and the four Rig_Medium animation packs
+  (KayKit Character Animations)
 - `docs/js/arena.js` — ground, wall, rocks, pillars, collision
 - `docs/js/effects.js` — dust puffs and impact sparks (pooled particles)
 - `docs/js/audio.js` — Web Audio blips (no audio files)
@@ -123,12 +132,16 @@ CC0, no attribution required:
   clip at near-natural speed (the heavy still plays its whole clip
   sped up); hit timing (damage lands halfway through the swing) is
   unchanged.
-- **Boss:** the Skeleton from Quaternius's *Ultimate Monsters* pack
-  (itch mirror, 4 monsters), converted FBX → GLB with all five takes
-  (Attack, Death, Idle, Running, Spawn). It has no walk or hit clip:
-  walking uses Running at low speed, and a landed hit flashes the
-  skeleton white. Charge runs on Running; the sweep, the stomp slam,
-  the leap slam and the spin all use Attack.
+- **Bosses:** the Barbarian from KayKit's *Character Pack: Adventurers*
+  2.0, with KayKit's `axe_2handed` — same Rig_Medium skeleton as the
+  hunter, so the KayKit clips play on him directly (2H Slice / Chop /
+  Spinning, run, jump, Spawn_Ground entrance, Hit_A, Death_A). At
+  ×1.67 he stands 4.0 m. The Skeleton from Quaternius's *Ultimate
+  Monsters* pack (itch mirror, 4 monsters), converted FBX → GLB with
+  all five takes (Attack, Death, Idle, Running, Spawn). It has no walk
+  or hit clip: walking uses Running at low speed, and a landed hit
+  flashes the skeleton white. Charge runs on Running; the sweep, the
+  stomp slam, the leap slam and the spin all use Attack.
 
 The arena, sky, lighting, rocks and pillars are still procedural
 primitives — this pass was player + monster only.

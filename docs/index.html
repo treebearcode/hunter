@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="color-scheme" content="light dark" />
 <link rel="icon" href="data:," />
-<title>Hunter — Skeleton Prototype</title>
+<title>Hunter</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -14,7 +14,7 @@
 <!-- HUD -->
 <div id="hud" hidden>
   <div id="boss-bar">
-    <div id="boss-name">THE SKELETON</div>
+    <div id="boss-name">THE BARBARIAN</div>
     <div class="bar boss"><div id="boss-fill"></div></div>
   </div>
   <button id="pause-button" type="button" title="Pause (P)">⏸</button>
@@ -26,7 +26,7 @@
     <div id="time-row">Time <span id="time-text">0:00</span></div>
   </div>
   <div id="lock-indicator" hidden>◉ LOCKED ON</div>
-  <div id="enrage-banner" hidden>THE SKELETON IS ENRAGED</div>
+  <div id="enrage-banner" hidden>THE BARBARIAN IS ENRAGED</div>
   <div id="lock-hint" hidden>Click to capture the mouse — move the mouse to look around · Esc to release</div>
   <div id="controls-hint">
     WASD move · Mouse: look (click to capture) · Q / E or right-drag: orbit · Wheel: zoom · Tab / middle-click: lock-on<br />
@@ -40,14 +40,21 @@
 <div id="start-screen" class="overlay">
   <div class="panel">
     <h1>HUNTER</h1>
-    <p class="sub">Prototype — one arena, one boss, one longsword</p>
-    <p>Face <strong>the Skeleton</strong>, the undead brute, alone in the ring.
+    <p class="sub">Prototype — one arena, two bosses, one longsword</p>
+    <p id="boss-desc-barbarian">Face <strong>the Barbarian</strong>, a rival bruiser with a two-handed axe.
+       He swings wide, leaps high, and spins through the whole ring.
+       Learn his tells. Dodge the charge. Break his bear hat. Don't get stepped on.</p>
+    <p id="boss-desc-skeleton" hidden>Face <strong>the Skeleton</strong>, the undead brute, alone in the ring.
        Learn its tells. Dodge the charge. Crack its skull. Don't get stepped on.</p>
+    <div id="boss-select" role="group" aria-label="Choose your boss">
+      <button id="boss-select-barbarian" class="boss-select selected" type="button" aria-pressed="true">THE BARBARIAN<span class="boss-tag">MAIN BOSS</span></button>
+      <button id="boss-select-skeleton" class="boss-select" type="button" aria-pressed="false">THE SKELETON</button>
+    </div>
     <table class="controls">
       <tr><td>WASD</td><td>Move (camera-relative)</td></tr>
       <tr><td>Mouse (click to capture)</td><td>Look around — Esc releases the mouse</td></tr>
       <tr><td>Q / E, right-drag, wheel</td><td>Orbit camera / zoom</td></tr>
-      <tr><td>Tab or middle-click</td><td>Lock on to the Skeleton</td></tr>
+      <tr><td>Tab or middle-click</td><td>Lock on to the boss</td></tr>
       <tr><td>Click, J or F</td><td>Light attack — 3-hit combo</td></tr>
       <tr><td>Right-click, K or G</td><td>Heavy attack</td></tr>
       <tr><td>F + G, or LMB + RMB</td><td>Thrust — long-reach stab (14 dmg)</td></tr>
@@ -56,7 +63,7 @@
       <tr><td>P or ⏸ button</td><td>Pause</td></tr>
     </table>
     <button id="start-button">ENTER THE ARENA</button>
-    <p class="fine">Tip: bait the charge — when the Skeleton hits the wall, it staggers.</p>
+    <p class="fine">Tip: bait the charge — when the boss hits the wall, it staggers.</p>
   </div>
 </div>
 
