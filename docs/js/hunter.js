@@ -320,6 +320,7 @@ export class Hunter {
     this.attackIndex = 0;   // which hit of the light combo (0, 1, 2)
     this.hitDone = false;   // the swing has already applied its damage
     this.comboQueued = false;
+    this.stabQueued = false; // a late-chord stab waiting for this swing to end
     this.comboGrace = 0;    // seconds left of the post-swing chain window
     this.iframes = 0;       // > 0 while a dodge roll is protecting us
     this.hurtInvuln = 0;    // brief protection right after taking a hit
@@ -511,6 +512,9 @@ export class Hunter {
     const extra = CONFIG.stabCost - spent;
     if (extra > 0 && this.stamina < extra) return false;
     if (extra > 0) this._spendStamina(extra);
+    // A convert supersedes any stab queued earlier in this swing —
+    // without this, the queued stab would fire again after this one.
+    this.stabQueued = false;
     this.attackKind = 'stab';
     this.stateT = 0;
     this.hitDone = false;
@@ -523,11 +527,32 @@ export class Hunter {
     return true;
   }
 
+  // Queue a stab to start when the current swing ends: the second half
+  // of a light+heavy chord that arrived after the swing's hit already
+  // landed (too late to convert the swing into a stab), or after the
+  // 300 ms chord window passed. A press during a swing can only be a
+  // chord — a heavy needs idle, a light would chain — so the press is
+  // never silently dropped: the chord stabs next instead of now.
+  // The queued stab is its own move at the full stab cost, charged
+  // when it starts; it wins over a buffered combo hit, since the chord
+  // is the more deliberate input. Returns false if there is no swing
+  // running to queue onto (idle, dodge, heal).
+  tryQueueStab() {
+    if (!this.alive || this.state !== 'attack') return false;
+    if (this.attackKind !== 'light' && this.attackKind !== 'heavy') return false;
+    this.stabQueued = true;
+    this.comboQueued = false;
+    return true;
+  }
+
   _beginAttack() {
     this.state = 'attack';
     this.stateT = 0;
     this.hitDone = false;
     this.attackFacingSnapped = false;
+    // A fresh move starts: no stale queued stab survives it. (The
+    // queue is consumed before _beginAttack when a queued stab starts.)
+    this.stabQueued = false;
     const { name, rate } = this._attackClip();
     this._replayClip(name, { loop: false, clamp: true, fade: 0.05, rate });
     this._swingSound();
@@ -549,7 +574,7 @@ export class Hunter {
     // hit has landed (stateT past the hit point). Cancelling earlier
     // would let the hunter bail on the commitment of every swing.
     if (this.state === 'attack' && !this.hitDone) return;
-    if (this.state === 'attack') this.comboQueued = false;
+    if (this.state === 'attack') { this.comboQueued = false; this.stabQueued = false; }
     if (this.stamina < CONFIG.dodgeCost) return;
     this._spendStamina(CONFIG.dodgeCost);
     // Roll in the direction we are moving, or backwards if standing still.
@@ -801,7 +826,31 @@ export class Hunter {
         this.model.rotation.z = lean.z;
       }
       if (this.stateT >= dur) {
-        if (this.attackKind === 'light' && this.comboQueued && this.attackIndex < 2) {
+        // Queued stab (late chord): the second half of a light+heavy
+        // chord arrived during this swing but too late to convert it,
+        // so it stabs now, as its own move at the full stab cost. It
+        // wins over a buffered combo hit — the chord is the more
+        // deliberate input. Without enough stamina it just fizzles
+        // and the swing ends normally below. When the stab starts,
+        // _beginAttack already put the state back to 'attack' with
+        // stateT 0, so neither the chain nor the end branch below
+        // may run in the same frame (the end branch would instantly
+        // force the new stab back to idle before its hit lands).
+        let stabStarted = false;
+        if (this.stabQueued) {
+          this.stabQueued = false;
+          this.comboQueued = false;
+          if (this.stamina >= CONFIG.stabCost) {
+            this._spendStamina(CONFIG.stabCost);
+            this.attackKind = 'stab';
+            this.comboGrace = 0;
+            this._beginAttack();
+            stabStarted = true;
+          }
+        }
+        if (stabStarted) {
+          // Nothing else to do this frame: the stab is running.
+        } else if (this.attackKind === 'light' && this.comboQueued && this.attackIndex < 2) {
           // Chain into the next combo hit.
           this.comboQueued = false;
           this.attackIndex++;

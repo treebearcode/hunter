@@ -153,11 +153,14 @@ const input = { forward: false, back: false, left: false, right: false, camYaw: 
 // chord waiting (the first press fires its swing immediately, so there
 // is no input delay to wait through). A chord only counts if the two
 // presses are the light+heavy pair, within 300 ms of each other — the
-// old 150 ms window proved too tight in real play, and a mistimed
-// second press was silently dropped. If no swing is running to convert
-// (idle), a chord stabs directly instead of starting a light/heavy
-// swing first; if even that cannot start (not enough stamina), the
-// press falls through to a normal light/heavy swing as before.
+// old 150 ms window proved too tight in real play. If the second press
+// arrives after the swing's hit already landed, or after the 300 ms
+// window, it is NOT dropped: it queues a stab for when the swing ends
+// (tryQueueStab), because a press during a swing can only be a chord.
+// If no swing is running to convert (idle), a chord stabs directly
+// instead of starting a light/heavy swing first; if even that cannot
+// start (not enough stamina), the press falls through to a normal
+// light/heavy swing as before.
 let lastAttackPress = { input: null, time: 0 };
 function attackPress(input, kind) {
   const now = performance.now();
@@ -174,6 +177,18 @@ function attackPress(input, kind) {
       lastAttackPress = { input: null, time: 0 };
       return;
     }
+  }
+  // Late chord: the partner press landed while a light/heavy swing is
+  // still running, but too late to convert it (its hit already landed,
+  // or the 300 ms window passed). Queue the stab for when the swing
+  // ends instead of dropping the press. No window check here on
+  // purpose — the swing itself is the window: any light+heavy pair
+  // inside one swing is a chord, and a press after the swing ends is
+  // a normal heavy/light instead (tryQueueStab refuses when idle).
+  if (chordPartner && lastAttackPress.input === chordPartner
+      && hunter.tryQueueStab()) {
+    lastAttackPress = { input: null, time: 0 };
+    return;
   }
   lastAttackPress = { input, time: now };
   if (kind === 'light') hunter.tryLight();
